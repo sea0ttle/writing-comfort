@@ -1,0 +1,2559 @@
+---
+title: "What Makes a Pen Comfortable?"
+subtitle: "A data-backed look at grip, balance, and the feel of writing<br><br>\n<a
+  href=\"https://www.linkedin.com/in/austinpate/\" target=\"_blank\" rel=\"noopener\"
+  class=\"about-me-link\" style=\"text-decoration: underline;\">About me</a>\n"
+title-block-banner: true
+format:
+  html:
+    theme: flatly
+    code-summary: Show the code
+    page-layout: article
+    smooth-scroll: true
+    df-print: paged
+    fig-responsive: true
+    embed-resources: true
+    mermaid-format: svg
+    appendix-style: default
+    footnotes-hover: false
+    citations-hover: true
+    crossrefs-hover: true
+    include-in-header: "click-footnotes.html"
+server: shiny
+execute:
+  echo: false
+  warning: false
+  message: false
+  fig-align: center
+  fig-width: 8
+  fig-height: 5.5
+callout-appearance: simple
+reference-location: document
+citation-location: document
+resource_files:
+- analysis_pipeline_output/04_visuals/04_visual_bundle.rds
+- analysis_pipeline_output/03_review/03_glmm_review_bundle.rds
+- analysis_pipeline_output/02_maxdiff/02_maxdiff_bundle.rds
+- analysis_pipeline_output/01_clean/01_clean_data_bundle.rds
+---
+
+```{=html}
+<!--
+Render locally first:
+  quarto render writing_comfort_portfolio.qmd
+
+Preview locally:
+  quarto preview writing_comfort_portfolio.qmd
+
+Publish the interactive document to shinyapps.io from R:
+  library(quarto)
+  quarto_publish_app(server = "shinyapps.io")
+-->
+```
+
+```{r}
+#| label: setup
+#| include: false
+
+resolve_project_dir <- function() {
+  input_path <- tryCatch(knitr::current_input(dir = TRUE), error = function(e) character(0))
+
+  if (length(input_path) >= 1 && !is.na(input_path[[1]]) && nzchar(input_path[[1]])) {
+    candidate <- input_path[[1]]
+
+    if (dir.exists(candidate)) {
+      return(normalizePath(candidate, mustWork = TRUE))
+    }
+
+    return(normalizePath(dirname(candidate), mustWork = TRUE))
+  }
+
+  normalizePath(getwd(), mustWork = TRUE)
+}
+
+project_dir <- resolve_project_dir()
+source(file.path(project_dir, "pipeline_utils.R"))
+
+required_pkgs <- c(
+  "tidyverse", "readr", "gt", "glue", "ggtext", "tidytext",
+  "scales", "lme4", "htmltools", "shiny", "broom.mixed", "glmnet"
+)
+
+missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
+
+if (length(missing_pkgs)) {
+  stop(
+    paste0(
+      "Missing required packages: ",
+      paste(missing_pkgs, collapse = ", "),
+      "\n\nInstall them first, then render again."
+    ),
+    call. = FALSE
+  )
+}
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(readr)
+  library(gt)
+  library(glue)
+  library(ggtext)
+  library(tidytext)
+  library(scales)
+  library(lme4)
+  library(htmltools)
+  library(shiny)
+  library(broom.mixed)
+  library(glmnet)
+})
+
+options(width = 120)
+
+diam_col <- "#2596be"
+balance_col <- "darkgrey"
+fountain_col <- "#4a6fa5"
+accent_col <- "#0b7285"
+takeaway_green <- "#2F8F6B"
+
+fmt_pct1 <- label_percent(accuracy = 1)
+fmt_pct01 <- label_percent(accuracy = 0.1)
+fmt_num1 <- label_number(accuracy = 0.1)
+fmt_num2 <- label_number(accuracy = 0.01)
+fmt_comma <- comma
+
+pretty_model <- c(
+  null = "Null model",
+  fountain_only = "Fountain only",
+  diameter_only = "Diameter only",
+  diameter_fountain = "Diameter + fountain",
+  diameter_hand_fountain = "Diameter + hand size + fountain",
+  cg_rel_no_interaction = "Diameter + hand size + relative balance + fountain",
+  cg_rel_interaction = "Diameter + hand size x relative balance + fountain",
+  cg_abs_interaction = "Diameter + hand size x raw balance + fountain",
+  torque_interaction = "Diameter + hand size x torque + fountain",
+  full_geom_rel = "Diameter + weight + length + hand size x relative balance + fountain",
+  current_main = "Diameter + hand size x relative balance + fountain",
+  plus_press_force = "Add press force",
+  plus_handwriting = "Add handwriting size",
+  plus_balance_pref = "Add stated balance preference",
+  balance_pref_interaction = "Hand size + stated balance preference x relative balance + fountain",
+  plus_grip_posture = "Add grip posture",
+  plus_session = "Add longest writing session",
+  original_press_model = "Diameter x press force + weight x press force + fountain",
+  all_controls = "Diameter + weight + length + hand size x relative balance + all controls + fountain",
+  intercept_only = "Final fixed effects + random intercept",
+  diameter_slope = "Add respondent-specific diameter slope",
+  cg_rel_slope = "Add respondent-specific balance slope",
+  both_slopes = "Add respondent-specific diameter and balance slopes",
+  matched_current_main = "Balance",
+  matched_original_press_model = "Writing Force",
+  matched_weight_hand_interaction = "Weight",
+  matched_length_hand_interaction = "Length",
+  binary_fountain_same_pen_sample = "Binary fountain indicator",
+  product_type_factor = "Full pen-type factor",
+  base_current_main = "Base current main model",
+  plus_weight = "Add raw weight",
+  plus_length = "Add raw length",
+  plus_weight_length = "Add weight + length",
+  plus_weight_hand_interaction = "Add hand size x weight",
+  plus_length_hand_interaction = "Add hand size x length",
+  plus_weight_length_hand_interaction = "Add hand size x weight and hand size x length",
+  wb_base = "Within/between base model",
+  wb_plus_weight = "Within/between + weight",
+  wb_plus_length = "Within/between + length",
+  wb_plus_weight_length = "Within/between + weight + length",
+  bridge_base = "Bridge base model",
+  bridge_weight = "Bridge + weight stated preference",
+  bridge_length = "Bridge + length stated preference",
+  bridge_weight_length = "Bridge + weight and length stated preference"
+)
+
+pretty_var <- c(
+  product_type = "Matched instrument type",
+  total_records = "Matched instrument records",
+  l_writing = "Writing length",
+  w_writing = "Writing weight",
+  med_diameter_grip = "Grip diameter",
+  med_diameter = "Body diameter",
+  cg_est_used_raw = "Estimated raw center of gravity",
+  cg_est_used_rel = "Estimated relative balance",
+  used_25mm_torque_abs_n_m = "Estimated torque at grip point"
+)
+
+pretty_attr <- c(
+  Balance = "Balance",
+  `Barrel Material` = "Barrel material",
+  `Grip Diameter` = "Grip diameter",
+  `Grip Texture` = "Grip texture",
+  Length = "Length",
+  `Nib/tip Smoothness` = "Nib or tip smoothness",
+  `Overall Weight` = "Overall weight"
+)
+
+metric_card <- function(value, label, note = NULL) {
+  div(
+    class = "metric-card",
+    div(class = "metric-value", value),
+    div(class = "metric-label", label),
+    if (!is.null(note)) div(class = "metric-note", note)
+  )
+}
+
+term_direction <- function(tbl, term, model_name = "current_main") {
+  x <- tbl %>%
+    filter(model == model_name, term == !!term) %>%
+    arrange(outcome)
+
+  if (nrow(x) == 0) {
+    return("not available")
+  }
+
+  if (all(x$estimate > 0, na.rm = TRUE)) {
+    "positive at all three cut points"
+  } else if (all(x$estimate < 0, na.rm = TRUE)) {
+    "negative at all three cut points"
+  } else {
+    "direction changed across cut points"
+  }
+}
+
+predict_fixed_prob <- function(fit, newdata) {
+  predict(
+    fit,
+    newdata = newdata,
+    re.form = NA,
+    type = "response",
+    allow.new.levels = TRUE
+  )
+}
+
+fmt_or <- function(x) {
+  ifelse(is.na(x), NA_character_, sprintf("%.2f", x))
+}
+
+binary_token_set <- function(x) {
+  x_chr <- as.character(x)
+
+  if (length(x_chr) == 0 || all(is.na(x_chr))) {
+    return(integer(0))
+  }
+
+  bits <- unlist(strsplit(x_chr[1], ","))
+  bits <- trimws(bits)
+  vals <- parse_capped_flag(bits)
+  vals <- vals[!is.na(vals)]
+
+  unique(as.integer(vals))
+}
+
+binary_flag_value <- function(x) {
+  toks <- binary_token_set(x)
+
+  if (length(toks) == 1 && toks == 1L) return(1)
+  if (length(toks) == 1 && toks == 0L) return(0)
+
+  NA_real_
+}
+
+binary_flag_label <- function(x) {
+  toks <- sort(binary_token_set(x))
+
+  if (length(toks) == 1 && toks == 1L) return("Yes")
+  if (length(toks) == 1 && toks == 0L) return("No")
+
+  "Mixed / Unknown"
+}
+
+binary_flag_value_vec <- function(x) {
+  vapply(x, binary_flag_value, numeric(1))
+}
+
+binary_any_yes_value <- function(x) {
+  toks <- binary_token_set(x)
+
+  if (length(toks) == 0) return(NA_real_)
+  if (any(toks == 1L)) return(1)
+  if (any(toks == 0L)) return(0)
+
+  NA_real_
+}
+
+binary_any_yes_value_vec <- function(x) {
+  vapply(x, binary_any_yes_value, numeric(1))
+}
+
+binary_flag_label_vec <- function(x) {
+  vapply(x, binary_flag_label, character(1))
+}
+
+pmax_na <- function(a, b) {
+  out <- ifelse(
+    is.na(a) & is.na(b),
+    NA_real_,
+    ifelse(is.na(a), b, ifelse(is.na(b), a, pmax(a, b)))
+  )
+
+  as.numeric(out)
+}
+
+choose_optimal_balance <- function(cg_not_posted, cg_posted,
+                                   prob_small_not_posted, prob_small_posted,
+                                   prob_medium_not_posted, prob_medium_posted,
+                                   prob_large_not_posted, prob_large_posted) {
+  small_pref_posted <- !is.na(prob_small_posted) &
+    (is.na(prob_small_not_posted) | prob_small_posted > prob_small_not_posted)
+
+  medium_pref_posted <- !is.na(prob_medium_posted) &
+    (is.na(prob_medium_not_posted) | prob_medium_posted > prob_medium_not_posted)
+
+  large_pref_posted <- !is.na(prob_large_posted) &
+    (is.na(prob_large_not_posted) | prob_large_posted > prob_large_not_posted)
+
+  out <- ifelse(
+    small_pref_posted & medium_pref_posted & large_pref_posted,
+    cg_posted,
+    ifelse(
+      !small_pref_posted & !medium_pref_posted & !large_pref_posted,
+      cg_not_posted,
+      rowMeans(cbind(cg_not_posted, cg_posted), na.rm = TRUE)
+    )
+  )
+
+  out[!is.finite(out)] <- NA_real_
+  out
+}
+
+choose_good_option_cutoff <- function(fit, data, outcome = "high6",
+                                      threshold_grid = seq(0.05, 0.95, by = 0.005)) {
+  y <- data[[outcome]]
+
+  pred <- rep(NA_real_, nrow(data))
+  cc <- stats::complete.cases(data[, c("survey_id", "hand_size", "diameter_z", "cg_rel_used_z", "is_fountain", outcome)])
+
+  if (any(cc)) {
+    pred[cc] <- as.numeric(
+      predict(
+        fit,
+        newdata = data[cc, , drop = FALSE],
+        re.form = NA,
+        type = "response",
+        allow.new.levels = TRUE
+      )
+    )
+  }
+
+  eval_df <- tibble::tibble(y = y, pred = pred) %>%
+    tidyr::drop_na()
+
+  if (nrow(eval_df) == 0) {
+    stop("Could not derive a probability cutoff from the final model data.", call. = FALSE)
+  }
+
+  tibble::tibble(threshold = threshold_grid) %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(
+      tp = sum(eval_df$pred >= threshold & eval_df$y == 1),
+      tn = sum(eval_df$pred < threshold & eval_df$y == 0),
+      fp = sum(eval_df$pred >= threshold & eval_df$y == 0),
+      fn = sum(eval_df$pred < threshold & eval_df$y == 1),
+      sensitivity = ifelse((tp + fn) > 0, tp / (tp + fn), NA_real_),
+      specificity = ifelse((tn + fp) > 0, tn / (tn + fp), NA_real_),
+      balanced_accuracy = (sensitivity + specificity) / 2,
+      youden_j = sensitivity + specificity - 1
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::arrange(
+      dplyr::desc(youden_j),
+      dplyr::desc(balanced_accuracy),
+      abs(threshold - 0.5)
+    )
+}
+
+make_catalog_opportunity_curve_data <- function(df,
+                                                threshold_grid = seq(0.40, 0.90, by = 0.01)) {
+  long_df <- dplyr::bind_rows(
+    df %>% dplyr::transmute(Configuration = "Posted", `Hand Size` = "Small", prob_high = prob_small_posted_effective),
+    df %>% dplyr::transmute(Configuration = "Posted", `Hand Size` = "Medium", prob_high = prob_medium_posted_effective),
+    df %>% dplyr::transmute(Configuration = "Posted", `Hand Size` = "Large", prob_high = prob_large_posted_effective),
+    df %>% dplyr::transmute(Configuration = "Not Posted", `Hand Size` = "Small", prob_high = prob_small_not_posted),
+    df %>% dplyr::transmute(Configuration = "Not Posted", `Hand Size` = "Medium", prob_high = prob_medium_not_posted),
+    df %>% dplyr::transmute(Configuration = "Not Posted", `Hand Size` = "Large", prob_high = prob_large_not_posted),
+    df %>% dplyr::transmute(Configuration = "Best Setup", `Hand Size` = "Small", prob_high = optimal_prob_small),
+    df %>% dplyr::transmute(Configuration = "Best Setup", `Hand Size` = "Medium", prob_high = optimal_prob_medium),
+    df %>% dplyr::transmute(Configuration = "Best Setup", `Hand Size` = "Large", prob_high = optimal_prob_large)
+  ) %>%
+    dplyr::mutate(
+      Configuration = factor(Configuration, levels = c("Posted", "Not Posted", "Best Setup")),
+      `Hand Size` = factor(`Hand Size`, levels = c("Small", "Medium", "Large"))
+    )
+
+  if (nrow(long_df) == 0) {
+    return(tibble::tibble())
+  }
+
+  tidyr::crossing(long_df, threshold = threshold_grid) %>%
+    dplyr::group_by(Configuration, `Hand Size`, threshold) %>%
+    dplyr::summarise(
+      share_good = sum(prob_high >= threshold, na.rm = TRUE) / dplyr::n(),
+      n_good = sum(prob_high >= threshold, na.rm = TRUE),
+      n_total = dplyr::n(),
+      .groups = "drop"
+    )
+}
+
+build_fountain_catalog_prediction_base <- function(product_lookup, proxy_models,
+                                                   final_model, final_model_data) {
+  diameter_mu <- mean(final_model_data$diameter, na.rm = TRUE)
+  diameter_sd <- sd(final_model_data$diameter, na.rm = TRUE)
+  diameter_range <- range(final_model_data$diameter, na.rm = TRUE)
+  cg_rel_mu <- mean(final_model_data$cg_rel_used, na.rm = TRUE)
+  cg_rel_sd <- sd(final_model_data$cg_rel_used, na.rm = TRUE)
+  cg_rel_range <- range(final_model_data$cg_rel_used, na.rm = TRUE)
+
+  if (!is.finite(diameter_sd) || diameter_sd <= 0 ||
+      !is.finite(cg_rel_sd) || cg_rel_sd <= 0 ||
+      !all(is.finite(diameter_range)) || !all(is.finite(cg_rel_range))) {
+    stop("Could not derive scaling parameters from final_model_data.", call. = FALSE)
+  }
+
+  survey_placeholder <- final_model_data$survey_id[1]
+  hand_levels_model <- if (is.factor(final_model_data$hand_size)) {
+    levels(final_model_data$hand_size)
+  } else {
+    c("Small", "Medium", "Large")
+  }
+
+  predict_catalog_prob <- function(diameter_vec, cg_rel_vec, hand_size_value) {
+    newdata <- tibble(
+      survey_id = rep(survey_placeholder, length(diameter_vec)),
+      hand_size = factor(rep(hand_size_value, length(diameter_vec)), levels = hand_levels_model),
+      diameter_z = (diameter_vec - diameter_mu) / diameter_sd,
+      cg_rel_used_z = (cg_rel_vec - cg_rel_mu) / cg_rel_sd,
+      is_fountain = 1L
+    )
+
+    in_final_model_range <- !is.na(diameter_vec) & !is.na(cg_rel_vec) &
+      dplyr::between(diameter_vec, diameter_range[1], diameter_range[2]) &
+      dplyr::between(cg_rel_vec, cg_rel_range[1], cg_rel_range[2])
+
+    preds <- rep(NA_real_, nrow(newdata))
+    cc <- complete.cases(newdata) & in_final_model_range
+
+    if (any(cc)) {
+      preds[cc] <- as.numeric(predict_fixed_prob(final_model, newdata[cc, , drop = FALSE]))
+    }
+
+    preds
+  }
+
+  product_lookup_catalog <- product_lookup
+  if (!"pocket_pen_bool" %in% names(product_lookup_catalog)) {
+    product_lookup_catalog$pocket_pen_bool <- if ("pocket_pen" %in% names(product_lookup_catalog)) {
+      product_lookup_catalog$pocket_pen
+    } else {
+      NA_real_
+    }
+  }
+
+  catalog <- product_lookup_catalog %>%
+    filter(product_type == "Fountain Pens") %>%
+    mutate(
+      catalog_row_id = row_number(),
+      manufacturer = dplyr::coalesce(dplyr::na_if(trimws(manufacturer), ""), "Unknown / missing"),
+      material_family_raw = dplyr::coalesce(dplyr::na_if(trimws(material_family), ""), "Other / Unknown"),
+      material_family = dplyr::case_when(
+        material_family_raw %in% c("Celluloid", "Cellulose Acetate", "Ebonite") ~ "Vintage Materials",
+        material_family_raw %in% c("Metal", "Metal - Aluminum", "Metal - Steel", "Metal - Brass", "Metal - Magnesium") ~ "General Metals",
+        material_family_raw %in% c("Metal - Gold", "Metal - Silver", "Metal - Bronze", "Metal - Copper", "Metal - Titanium", "Metal - Zirconium", "Metal - Platinum") ~ "Premium Metals",
+        material_family_raw %in% c("Plastic", "Plastic - Bioplastic") ~ "General Plastics",
+        material_family_raw %in% c("Plastic - Resin/Acrylic", "Plastic - Polycarbonate", "Celluloid Derivitave", "Celluloid Derivative") ~ "Premium Plastics",
+        material_family_raw %in% c("Stone", "Wood", "Bone", "Carbon Fiber", "Glass", "Lucite", "Micarta", "Enamel", "Ultem", "Delrin", "Torlon", "Other / Unknown", "Unknown / missing") ~ "Other / Unknown",
+        TRUE ~ material_family_raw
+      ),
+      model_name = dplyr::coalesce(dplyr::na_if(trimws(model_name), ""), "Unknown model"),
+      item_label = stringr::str_squish(paste(manufacturer, model_name)),
+      retractable_flag = binary_flag_value_vec(retractable),
+      postable_flag = binary_flag_value_vec(postable),
+      retractable_filter = binary_flag_label_vec(retractable),
+      postable_filter = binary_flag_label_vec(postable),
+      pocket_pen_value = binary_any_yes_value_vec(pocket_pen_bool),
+      pocket_pen_filter = case_when(
+        pocket_pen_value == 1 ~ "Yes",
+        pocket_pen_value == 0 ~ "No",
+        TRUE ~ "Unknown/missing"
+      ),
+      capped_flag_raw = parse_capped_flag(capped),
+      price = safe_num(med_price),
+      diameter = safe_num(med_diameter_grip),
+      body_diameter = safe_num(med_diameter),
+      med_length_uncapped = safe_num(med_length_uncapped),
+      med_length_posted = safe_num(med_length_posted),
+      med_length = safe_num(med_length),
+      med_weight = safe_num(med_weight),
+      med_weight_cap = safe_num(med_weight_cap),
+      med_weight_uncapped = dplyr::coalesce(safe_num(med_weight) - safe_num(med_weight_cap), safe_num(med_weight)),
+      capped_flag = case_when(
+        retractable_flag == 1 ~ 0,
+        capped_flag_raw == 1 ~ 1,
+        !is.na(med_weight_cap) | !is.na(med_length_posted) ~ 1,
+        TRUE ~ 0
+      ),
+      length_not_posted = dplyr::coalesce(med_length_uncapped, med_length),
+      length_closed_model = case_when(
+        capped_flag == 0 ~ dplyr::coalesce(med_length_uncapped, med_length),
+        TRUE ~ med_length
+      ),
+      length_posted_model = case_when(
+        capped_flag == 0 ~ dplyr::coalesce(med_length_uncapped, med_length),
+        TRUE ~ med_length_posted
+      ),
+      weight_not_posted = case_when(
+        capped_flag == 0 ~ med_weight,
+        TRUE ~ med_weight_uncapped
+      ),
+      cap_weight_model = case_when(
+        capped_flag == 0 ~ 0,
+        TRUE ~ med_weight_cap
+      ),
+      price_band = case_when(
+        is.na(price) ~ "Unknown / missing",
+        price < 25 ~ "Under $25",
+        price < 50 ~ "$25-$49",
+        price < 100 ~ "$50-$99",
+        price < 200 ~ "$100-$199",
+        price < 500 ~ "$200-$499",
+        TRUE ~ "$500+"
+      )
+    )
+
+  pred_input_no_wcp <- catalog %>%
+    transmute(
+      LPn = length_not_posted,
+      LCp = length_closed_model,
+      LPs = length_posted_model,
+      DBa = body_diameter,
+      D25 = body_diameter,
+      WPn = weight_not_posted
+    )
+
+  pred_input_with_wcp <- catalog %>%
+    transmute(
+      LPn = length_not_posted,
+      LCp = length_closed_model,
+      LPs = length_posted_model,
+      DBa = body_diameter,
+      D25 = body_diameter,
+      WPn = weight_not_posted,
+      WCp = cap_weight_model
+    )
+
+  catalog <- catalog %>%
+    mutate(
+      cg_raw_not_posted = predict_lm_model(proxy_models$fit_cgu, pred_input_with_wcp),
+      cg_raw_posted = predict_ridge_model(proxy_models$fit_cgp, pred_input_with_wcp),
+      cg_rel_not_posted = predict_lm_model(proxy_models$fit_cgpn, pred_input_no_wcp),
+      cg_rel_posted = predict_lm_model(proxy_models$fit_cgps, pred_input_with_wcp)
+    ) %>%
+    mutate(
+      posted_state_available = case_when(
+        retractable_flag == 1 ~ TRUE,
+        postable_flag == 0 ~ FALSE,
+        !is.na(med_length_posted) & !is.na(med_weight) & !is.na(cg_raw_posted) & !is.na(cg_rel_posted) ~ TRUE,
+        TRUE ~ FALSE
+      ),
+      length_posted_effective = case_when(
+        retractable_flag == 1 ~ length_not_posted,
+        posted_state_available ~ med_length_posted,
+        TRUE ~ NA_real_
+      ),
+      weight_posted_effective = case_when(
+        retractable_flag == 1 ~ weight_not_posted,
+        posted_state_available ~ med_weight,
+        TRUE ~ NA_real_
+      ),
+      cg_raw_posted_effective = case_when(
+        retractable_flag == 1 ~ cg_raw_not_posted,
+        posted_state_available ~ cg_raw_posted,
+        TRUE ~ NA_real_
+      ),
+      cg_rel_posted_effective = case_when(
+        retractable_flag == 1 ~ cg_rel_not_posted,
+        posted_state_available ~ cg_rel_posted,
+        TRUE ~ NA_real_
+      )
+    )
+
+  torque_not_posted <- calc_torque(
+    mass_g = catalog$weight_not_posted,
+    cg_mm = catalog$cg_raw_not_posted,
+    grip_mm = 25
+  )
+
+  torque_posted_effective <- calc_torque(
+    mass_g = catalog$weight_posted_effective,
+    cg_mm = catalog$cg_raw_posted_effective,
+    grip_mm = 25
+  )
+
+  catalog <- catalog %>%
+    mutate(
+      torque_not_posted = torque_not_posted$torque_abs_n_m,
+      torque_posted_effective = torque_posted_effective$torque_abs_n_m,
+      complete_not_posted = !is.na(diameter) & !is.na(cg_rel_not_posted) &
+        dplyr::between(diameter, diameter_range[1], diameter_range[2]) &
+        dplyr::between(cg_rel_not_posted, cg_rel_range[1], cg_rel_range[2]),
+      complete_posted_effective = !is.na(diameter) & !is.na(cg_rel_posted_effective) &
+        dplyr::between(diameter, diameter_range[1], diameter_range[2]) &
+        dplyr::between(cg_rel_posted_effective, cg_rel_range[1], cg_rel_range[2]),
+      prob_small_not_posted = predict_catalog_prob(diameter, cg_rel_not_posted, "Small"),
+      prob_medium_not_posted = predict_catalog_prob(diameter, cg_rel_not_posted, "Medium"),
+      prob_large_not_posted = predict_catalog_prob(diameter, cg_rel_not_posted, "Large"),
+      prob_small_posted_effective = predict_catalog_prob(diameter, cg_rel_posted_effective, "Small"),
+      prob_medium_posted_effective = predict_catalog_prob(diameter, cg_rel_posted_effective, "Medium"),
+      prob_large_posted_effective = predict_catalog_prob(diameter, cg_rel_posted_effective, "Large")
+    ) %>%
+    mutate(
+      prob_small_not_posted = if_else(complete_not_posted, prob_small_not_posted, NA_real_),
+      prob_medium_not_posted = if_else(complete_not_posted, prob_medium_not_posted, NA_real_),
+      prob_large_not_posted = if_else(complete_not_posted, prob_large_not_posted, NA_real_),
+      prob_small_posted_effective = if_else(complete_posted_effective, prob_small_posted_effective, NA_real_),
+      prob_medium_posted_effective = if_else(complete_posted_effective, prob_medium_posted_effective, NA_real_),
+      prob_large_posted_effective = if_else(complete_posted_effective, prob_large_posted_effective, NA_real_),
+      optimal_prob_small = pmax_na(prob_small_not_posted, prob_small_posted_effective),
+      optimal_prob_medium = pmax_na(prob_medium_not_posted, prob_medium_posted_effective),
+      optimal_prob_large = pmax_na(prob_large_not_posted, prob_large_posted_effective),
+      optimal_cg_rel = choose_optimal_balance(
+        cg_not_posted = cg_rel_not_posted,
+        cg_posted = cg_rel_posted_effective,
+        prob_small_not_posted = prob_small_not_posted,
+        prob_small_posted = prob_small_posted_effective,
+        prob_medium_not_posted = prob_medium_not_posted,
+        prob_medium_posted = prob_medium_posted_effective,
+        prob_large_not_posted = prob_large_not_posted,
+        prob_large_posted = prob_large_posted_effective
+      )
+    ) %>%
+    filter(complete_not_posted | complete_posted_effective) %>%
+    select(
+      catalog_row_id,
+      item_label,
+      manufacturer,
+      model_name,
+      material_family,
+      product_type,
+      price,
+      price_band,
+      pocket_pen_value,
+      pocket_pen_filter,
+      total_records,
+      retractable,
+      retractable_flag,
+      retractable_filter,
+      postable,
+      postable_flag,
+      postable_filter,
+      capped,
+      capped_flag,
+      filling_mechanism,
+      diameter,
+      body_diameter,
+      length_not_posted,
+      length_posted_effective,
+      weight_not_posted,
+      weight_posted_effective,
+      torque_not_posted,
+      torque_posted_effective,
+      cg_raw_not_posted,
+      cg_raw_posted,
+      cg_raw_posted_effective,
+      cg_rel_not_posted,
+      cg_rel_posted,
+      cg_rel_posted_effective,
+      complete_not_posted,
+      complete_posted_effective,
+      prob_small_not_posted,
+      prob_medium_not_posted,
+      prob_large_not_posted,
+      prob_small_posted_effective,
+      prob_medium_posted_effective,
+      prob_large_posted_effective,
+      optimal_prob_small,
+      optimal_prob_medium,
+      optimal_prob_large,
+      optimal_cg_rel
+    )
+
+  catalog
+}
+
+```
+
+```{r}
+#| label: report-style
+#| results: asis
+#| echo: false
+cat(r"(
+<style>
+body { font-feature-settings: 'tnum' 1; }
+.lead-copy { font-size: 1.08rem; color: #334155; max-width: 800px; }
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.9rem;
+  margin: 0.8rem 0 1.5rem 0;
+}
+.metric-card {
+  background: #ffffff;
+  border: 1px solid #e9ecef;
+  border-radius: 14px;
+  padding: 1rem 1rem 0.95rem 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.metric-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #1f4e79;
+  line-height: 1;
+}
+.metric-label {
+  margin-top: 0.35rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+.metric-note {
+  margin-top: 0.35rem;
+  color: #6b7280;
+  font-size: 0.85rem;
+  line-height: 1.3;
+}
+.section-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.90rem;
+  color: #0b7285;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+}
+.small-muted {
+  color: #6b7280;
+  font-size: 0.92rem;
+}
+.pull-quote {
+  margin: 0.75rem 0 1.25rem 0;
+  padding: 0.15rem 0 0.15rem 1.1rem;
+  border-left: 4px solid #0b7285;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  font-style: italic;
+  font-weight: 500;
+  color: #2c3f51;
+}
+.pull-quote p {
+  margin: 0;
+}
+.quarto-title-banner {
+  padding-top: 2.6rem;
+  padding-bottom: 2.3rem;
+}
+.takeaway {
+  border-left: 6px solid #2F8F6B !important;
+  background-color: #f4fbf7 !important;
+}
+
+.takeaway .callout-icon > svg {
+  display: none !important;
+}
+
+.takeaway .callout-icon::before {
+  content: "✓";
+  /* same styling */
+}
+
+.top-section-tabs {
+  margin-top: 1.4rem;
+}
+
+.top-section-tabs > .nav-tabs,
+.top-section-tabs > ul.nav-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: flex-end;
+  padding: 0;
+  margin: 0 0 1rem 0;
+  border: 0;
+  border-bottom: 1px solid #d9e2e8;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.top-section-tabs {
+  margin-top: 1.4rem;
+}
+
+.top-section-tabs > .nav-tabs,
+.top-section-tabs > ul.nav-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0;
+  margin: 0 0 1rem 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.top-section-tabs > .nav-tabs .nav-link,
+.top-section-tabs > ul.nav-tabs .nav-link,
+.top-section-tabs > .nav-tabs button,
+.top-section-tabs > ul.nav-tabs button {
+  border: 1px solid #d9e2e8 !important;
+  border-radius: 999px !important;
+  padding: 0.72rem 1rem;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: 0;
+  color: #495057;
+  background: #ffffff;
+  box-shadow: none;
+  transition: none !important;
+}
+
+.top-section-tabs > .nav-tabs .nav-link:hover,
+.top-section-tabs > ul.nav-tabs .nav-link:hover,
+.top-section-tabs > .nav-tabs button:hover,
+.top-section-tabs > ul.nav-tabs button:hover {
+  background: #f8f9fa;
+  color: #2c3f51;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.top-section-tabs > .nav-tabs .nav-link:focus,
+.top-section-tabs > ul.nav-tabs .nav-link:focus,
+.top-section-tabs > .nav-tabs button:focus,
+.top-section-tabs > ul.nav-tabs button:focus {
+  outline: none;
+  box-shadow: none !important;
+}
+
+.top-section-tabs > .nav-tabs .nav-link.active,
+.top-section-tabs > ul.nav-tabs .nav-link.active,
+.top-section-tabs > .nav-tabs .nav-item.show .nav-link,
+.top-section-tabs > ul.nav-tabs .nav-item.show .nav-link,
+.top-section-tabs > .nav-tabs button.active,
+.top-section-tabs > ul.nav-tabs button.active {
+  color: #ffffff !important;
+  background: #2c3f51 !important;
+  border-color: #2c3f51 !important;
+  box-shadow: none !important;
+}
+
+.top-section-tabs > .nav-tabs .nav-link::before,
+.top-section-tabs > ul.nav-tabs .nav-link::before,
+.top-section-tabs > .nav-tabs button::before,
+.top-section-tabs > ul.nav-tabs button::before {
+  display: none !important;
+  content: none !important;
+}
+
+.top-section-tabs > .tab-content,
+.top-section-tabs > .tab-content > .tab-pane {
+  background: transparent;
+}
+
+.top-section-tabs > .tab-content {
+  position: relative;
+  padding: 1.2rem 1.1rem 0.9rem 1.1rem;
+  border: 1px solid #d9e2e8;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.top-section-tabs > .tab-content::before {
+  display: none !important;
+  content: none !important;
+}
+
+@media (max-width: 768px) {
+  .top-section-tabs > .nav-tabs,
+  .top-section-tabs > ul.nav-tabs {
+    gap: 0.4rem;
+  }
+
+  .top-section-tabs > .nav-tabs .nav-link,
+  .top-section-tabs > ul.nav-tabs .nav-link,
+  .top-section-tabs > .nav-tabs button,
+  .top-section-tabs > ul.nav-tabs button {
+    width: 100%;
+    text-align: center;
+  }
+
+  .top-section-tabs > .tab-content {
+    padding: 1rem 0.95rem 0.8rem 0.95rem;
+  }
+}
+
+details.gutcheck {
+  margin: 1rem 0 1.25rem 0;
+  border: 1px solid rgba(44, 62, 80, 0.14);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(44, 62, 80, 0.06);
+  overflow: hidden;
+}
+
+details.gutcheck[open] {
+  box-shadow: 0 10px 24px rgba(44, 62, 80, 0.10);
+}
+
+details.gutcheck summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.95rem 1.1rem;
+  font-weight: 700;
+  color: #2C3E50;
+  background: rgba(24, 188, 156, 0.12);
+  border-left: 5px solid #18BC9C;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+details.gutcheck summary:hover {
+  background: rgba(24, 188, 156, 0.12);
+}
+
+details.gutcheck summary::-webkit-details-marker {
+  display: none;
+}
+
+details.gutcheck summary::marker {
+  display: none;
+}
+
+details.gutcheck summary::before {
+  content: "▸";
+  font-size: 1rem;
+  line-height: 1;
+  color: #18BC9C;
+  flex-shrink: 0;
+  transform: translateY(-1px);
+}
+
+details.gutcheck[open] summary::before {
+  transform: rotate(90deg) translateX(1px);
+}
+
+details.gutcheck .gutcheck-label {
+  letter-spacing: 0.01em;
+}
+
+details.gutcheck .gutcheck-body {
+  padding: 1rem 1.1rem 1.1rem 1.1rem;
+  background: #ffffff;
+  color: #2C3E50;
+}
+
+details.gutcheck .gutcheck-body > :first-child {
+  margin-top: 0;
+}
+
+details.gutcheck .gutcheck-body > :last-child {
+  margin-bottom: 0;
+}
+
+details.gutcheck .gutcheck-body p,
+details.gutcheck .gutcheck-body ul,
+details.gutcheck .gutcheck-body ol {
+  margin-bottom: 0.9rem;
+}
+
+details.gutcheck .gutcheck-body strong {
+  color: #2C3E50;
+}
+
+details.gutcheck .gutcheck-body a {
+  color: #18BC9C;
+}
+
+details.gutcheck .gutcheck-body a:hover {
+  color: #128f76;
+}
+
+@media (max-width: 768px) {
+  details.gutcheck summary {
+    padding: 0.9rem 0.95rem;
+  }
+
+  details.gutcheck .gutcheck-body {
+    padding: 0.95rem 0.95rem 1rem 0.95rem;
+  }
+}
+
+details.readnote {
+  margin: 1rem 0 1.25rem 0;
+  border: 1px solid rgba(44, 62, 80, 0.14);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(44, 62, 80, 0.06);
+  overflow: hidden;
+}
+
+details.readnote[open] {
+  box-shadow: 0 10px 24px rgba(44, 62, 80, 0.10);
+}
+
+details.readnote summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.95rem 1.1rem;
+  font-weight: 700;
+  color: #2C3E50;
+  background: rgba(220, 53, 69, 0.12);
+  border-left: 5px solid #DC3545;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+details.readnote summary:hover {
+  background: rgba(220, 53, 69, 0.12);
+}
+
+details.readnote summary::-webkit-details-marker {
+  display: none;
+}
+
+details.readnote summary::marker {
+  display: none;
+}
+
+details.readnote summary::before {
+  content: "▸";
+  font-size: 1rem;
+  line-height: 1;
+  color: #DC3545;
+  flex-shrink: 0;
+  transform: translateY(-1px);
+}
+
+details.readnote[open] summary::before {
+  transform: rotate(90deg) translateX(1px);
+}
+
+details.readnote .gutcheck-label {
+  letter-spacing: 0.01em;
+}
+
+details.readnote .gutcheck-body {
+  padding: 1rem 1.1rem 1.1rem 1.1rem;
+  background: #ffffff;
+  color: #2C3E50;
+}
+
+details.readnote .gutcheck-body > :first-child {
+  margin-top: 0;
+}
+
+details.readnote .gutcheck-body > :last-child {
+  margin-bottom: 0;
+}
+
+details.readnote .gutcheck-body p,
+details.readnote .gutcheck-body ul,
+details.readnote .gutcheck-body ol {
+  margin-bottom: 0.9rem;
+}
+
+details.readnote .gutcheck-body strong {
+  color: #2C3E50;
+}
+
+details.readnote .gutcheck-body a {
+  color: #DC3545;
+}
+
+details.readnote .gutcheck-body a:hover {
+  color: #b02a37;
+}
+
+@media (max-width: 768px) {
+  details.readnote summary {
+    padding: 0.9rem 0.95rem;
+  }
+
+  details.readnote .gutcheck-body {
+    padding: 0.95rem 0.95rem 1rem 0.95rem;
+  }
+}
+
+/* Collapsed full footnotes section */
+.all-footnotes-collapsible {
+  margin-top: 2rem;
+  margin-bottom: 1.5rem;
+  border-top: 1px solid rgba(44, 62, 80, 0.14);
+  padding-top: 1rem;
+}
+
+.all-footnotes-collapsible > summary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 700;
+  color: #2C3E50;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.all-footnotes-collapsible > summary:hover {
+  text-decoration: underline;
+}
+
+.all-footnotes-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.all-footnotes-collapsible > summary::marker {
+  display: none;
+}
+
+.all-footnotes-collapsible > summary::before {
+  content: "▸";
+  color: #0b7285;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.all-footnotes-collapsible[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+</style>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const footnotes = document.querySelector("section.footnotes, div.footnotes");
+
+  if (!footnotes) return;
+  if (footnotes.closest(".all-footnotes-collapsible")) return;
+
+  const details = document.createElement("details");
+  details.className = "all-footnotes-collapsible";
+
+  const summary = document.createElement("summary");
+  summary.textContent = "View all footnotes";
+
+  footnotes.parentNode.insertBefore(details, footnotes);
+  details.appendChild(summary);
+  details.appendChild(footnotes);
+});
+</script>
+)")
+```
+
+```{r}
+#| label: build-analysis
+#| include: false
+#| cache: true
+
+paths <- make_pipeline_paths(project_dir)
+make_output_dirs(paths)
+
+run_pipeline_step <- function(script_name) {
+  step_env <- new.env(parent = globalenv())
+  step_env$project_dir <- project_dir
+  sys.source(file.path(project_dir, script_name), envir = step_env)
+}
+
+rebuild_pipeline <- FALSE
+
+clean_bundle_path <- file.path(paths$out$clean, "01_clean_data_bundle.rds")
+maxdiff_bundle_path <- file.path(paths$out$maxdiff, "02_maxdiff_bundle.rds")
+review_bundle_path <- file.path(paths$out$review, "03_glmm_review_bundle.rds")
+visual_bundle_path <- file.path(paths$out$visuals, "04_visual_bundle.rds")
+
+stop_if_missing <- function(path) {
+  if (!file.exists(path)) {
+    stop("Missing required file: ", path, call. = FALSE)
+  }
+}
+
+is_shiny_deploy <- nzchar(Sys.getenv("SHINY_PORT"))
+
+if (is_shiny_deploy) {
+  # On shinyapps.io → require prebuilt outputs, do NOT rebuild
+  stop_if_missing(clean_bundle_path)
+  stop_if_missing(maxdiff_bundle_path)
+  stop_if_missing(review_bundle_path)
+  stop_if_missing(visual_bundle_path)
+}
+
+if (rebuild_pipeline || !file.exists(clean_bundle_path)) {
+  run_pipeline_step("01_clean_data_and_features.R")
+}
+
+if (rebuild_pipeline || !file.exists(maxdiff_bundle_path)) {
+  run_pipeline_step("02_maxdiff_hb_and_clusters.R")
+}
+
+if (rebuild_pipeline || !file.exists(review_bundle_path)) {
+  run_pipeline_step("03_glmm_review_and_validation.R")
+}
+
+if (rebuild_pipeline || !file.exists(visual_bundle_path)) {
+  run_pipeline_step("04_final_model_visuals.R")
+}
+```
+
+```{r}
+#| label: load-analysis-objects
+#| include: false
+
+clean_bundle <- readRDS(clean_bundle_path)
+hb_bundle <- readRDS(maxdiff_bundle_path)
+review_bundle <- readRDS(review_bundle_path)
+visual_bundle <- readRDS(visual_bundle_path)
+
+responses_enriched <- clean_bundle$responses_enriched
+features_2_final <- clean_bundle$features_2_final
+plot_data <- visual_bundle$plot_data
+final_model <- review_bundle$selected_models$final_model
+final_model_data <- review_bundle$selected_models$final_model_data
+product_lookup <- clean_bundle$product_lookup
+proxy_models <- clean_bundle$proxy_models
+
+catalog_prediction_base <- build_fountain_catalog_prediction_base(
+  product_lookup = product_lookup,
+  proxy_models = proxy_models,
+  final_model = final_model,
+  final_model_data = final_model_data
+)
+
+catalog_cutoff_eval <- choose_good_option_cutoff(
+  fit = final_model,
+  data = final_model_data,
+  outcome = "high6"
+)
+catalog_good_option_cutoff <- catalog_cutoff_eval$threshold[1]
+
+catalog_material_order <- c(
+  "Premium Plastics",
+  "General Plastics",
+  "Premium Metals",
+  "General Metals",
+  "Vintage Materials",
+  "Other / Unknown"
+)
+
+catalog_material_choices <- catalog_material_order[
+  catalog_material_order %in% unique(na.omit(catalog_prediction_base$material_family))
+]
+
+catalog_price_choices <- c("Under $25", "$25-$49", "$50-$99", "$100-$199", "$200-$499", "$500+", "Unknown / missing")[
+  c("Under $25", "$25-$49", "$50-$99", "$100-$199", "$200-$499", "$500+", "Unknown / missing") %in%
+    unique(catalog_prediction_base$price_band)
+]
+
+catalog_pocket_pen_choices <- c("Yes", "No", "Unknown/missing")[
+  c("Yes", "No", "Unknown/missing") %in% unique(catalog_prediction_base$pocket_pen_filter)
+]
+
+overall_summary <- review_bundle$descriptive$overall_summary
+match_quality_summary <- review_bundle$descriptive$match_quality_summary
+attrition_summary <- review_bundle$descriptive$attrition_summary
+feature_missing_summary <- clean_bundle$feature_missing_summary
+proxy_cv_summary <- clean_bundle$proxy_cv_summary
+activity_cluster_counts <- clean_bundle$activity_cluster_counts
+types_cluster_counts <- clean_bundle$types_cluster_counts
+hb_fit_diagnostics <- hb_bundle$hb_fit_diagnostics
+hb_cluster_sizes <- hb_bundle$cluster_sizes
+stated_importance_summary <- hb_bundle$stated_importance_summary
+respondent_hb_shares <- hb_bundle$respondent_hb_shares
+
+core_model_comparison <- review_bundle$model_sets$core$comparison
+selected_coefficients <- review_bundle$model_sets$selected_coefficients
+threshold_coefficients <- review_bundle$model_sets$thresholds$coefficients
+matched_model_comparison <- review_bundle$validation$matched_model_comparison
+product_type_comparison <- review_bundle$validation$product_type_comparison
+lw_model_comparison <- review_bundle$validation$lw_model_comparison
+stated_vs_revealed_summary <- review_bundle$validation$stated_vs_revealed_summary
+within_between_summary <- review_bundle$validation$within_between_summary
+
+plot_pct_ci <- visual_bundle$plots$plot_pct_ci_no_title
+p_cg_hand <- visual_bundle$plots$p_cg_hand_no_title
+p_diam_final <- visual_bundle$plots$p_diam_final_no_title
+p_fountain_story <- visual_bundle$plots$p_fountain_story_no_title
+
+n_respondents <- nrow(responses_enriched)
+n_rated_items <- nrow(features_2_final)
+mean_items_per_person <- overall_summary$mean_items_per_respondent
+median_items_per_person <- overall_summary$median_items_per_respondent
+pct_high6 <- overall_summary$pct_high6
+pct_with_balance <- feature_missing_summary %>%
+  filter(variable == "cg_est_used_rel") %>%
+  pull(pct_nonmissing)
+pct_with_torque <- feature_missing_summary %>%
+  filter(variable == "used_25mm_torque_abs_n_m") %>%
+  pull(pct_nonmissing)
+pct_with_dimensions <- feature_missing_summary %>%
+  filter(variable == "med_diameter_grip") %>%
+  pull(pct_nonmissing)
+
+survey_segment_story <- hb_cluster_sizes %>%
+  mutate(pct = n / sum(n)) %>%
+  arrange(desc(n))
+
+source_tbl <- tibble::tribble(
+  ~`Data Source`, ~`What it contributed`, ~`How it was used`,
+  "Survey responses", "Demographics, writing habits, perferences, and foreced tradeoff questions", "Identified participant traits and grouped people by their stated preferences",
+  "Comfort ratings", "Instrument ratings on a 7-point scale (Very Uncomfortable→Very Comfortable), and posted vs. unposted usage", "The main outcome in the mixed models",
+  "Instrument catalogue", "Model name, dimensions, weights, cap/posting states, instrument type, material", "Matched each rated instrument to its physical characteristics",
+  "Reference dataset", "Measured center-of-gravity data from >200 real instruments", "Trained models to estimate balance from other availible measurements"
+)
+
+proxy_story_tbl <- proxy_cv_summary %>%
+  mutate(
+    proxy = recode(
+      model,
+      CGu_linear = "Uncapped raw center of gravity",
+      CGp_ridge = "Posted raw center of gravity",
+      CgPn_linear = "Uncapped relative balance",
+      CgPs_linear = "Posted relative balance"
+    ),
+    model_family = recode(model_type, lm = "Linear regression", ridge = "Ridge regression"),
+    used_for = recode(
+      model,
+      CGu_linear = "Used when the cap is not posted (raw length)",
+      CGp_ridge = "Used when the cap is posted (raw length)",
+      CgPn_linear = "Relative balance when the cap is not posted",
+      CgPs_linear = "Relative balance when the cap is posted"
+    )
+  ) %>%
+  select(proxy, model_family, used_for, mean_RMSE, mean_MAE, mean_R2)
+
+feature_story_tbl <- feature_missing_summary %>%
+  mutate(
+    feature = recode(variable, !!!pretty_var),
+    coverage = pct_nonmissing
+  ) %>%
+  select(feature, nonmissing, total_rows, coverage)
+
+activity_story <- activity_cluster_counts %>%
+  mutate(pct = n / sum(n)) %>%
+  arrange(desc(n))
+
+types_story <- types_cluster_counts %>%
+  mutate(pct = n / sum(n)) %>%
+  arrange(desc(n))
+
+activity_plot <- activity_story %>%
+  ggplot(aes(x = pct, y = reorder(activity_cluster_name, pct))) +
+  geom_col(fill = accent_col) +
+  geom_text(aes(label = percent(pct, accuracy = 1)), hjust = -0.1, size = 3.2) +
+  scale_x_continuous(labels = label_percent(), expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "How people tend to use their writing tools",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+types_plot <- types_story %>%
+  ggplot(aes(x = pct, y = reorder(types_cluster_name, pct))) +
+  geom_col(fill = fountain_col) +
+  geom_text(aes(label = percent(pct, accuracy = 1)), hjust = -0.1, size = 3.2) +
+  scale_x_continuous(labels = label_percent(), expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "How people tend to mix different writing instruments",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+attrition_plot_data <- attrition_summary %>%
+  mutate(
+    sample_name = recode(
+      sample_name,
+      all_rated_items = "All rated items",
+      core_same_sample = "Core model sample",
+      extended_same_sample = "Extended-control sample",
+      pen_only_core_same_sample = "Pen-only core sample"
+    )
+  )
+
+attrition_plot <- attrition_plot_data %>%
+  ggplot(aes(x = pct_of_all_rows, y = reorder(sample_name, pct_of_all_rows))) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = paste0(comma(n_rows), " rows")), hjust = -0.1, size = 3.2) +
+  scale_x_continuous(labels = label_percent(), expand = expansion(mult = c(0, 0.18))) +
+  labs(
+    title = "Our usable sample shrinks as more features are required",
+    x = "Share of all rated items",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+core_story_tbl <- core_model_comparison %>%
+  filter(is.na(error)) %>%
+  arrange(AIC) %>%
+  mutate(
+    model_label = recode(model, !!!pretty_model),
+    delta_AIC = AIC - min(AIC)
+  ) %>%
+  select(
+    model,
+    model_label,
+    n,
+    respondents,
+    AIC,
+    delta_AIC,
+    auc,
+    accuracy,
+    misclassification_rate,
+    R2_marginal,
+    R2_conditional
+  ) %>%
+  slice_head(n = 5)
+
+matched_story_tbl <- matched_model_comparison %>%
+  arrange(AIC) %>%
+  mutate(
+    model_label = recode(model, !!!pretty_model),
+    delta_AIC = AIC - min(AIC)
+  ) %>%
+  select(
+    model_label,
+    n,
+    respondents,
+    AIC,
+    delta_AIC,
+    auc,
+    accuracy,
+    R2_marginal,
+    R2_conditional
+  )
+
+final_model_tidy <- broom.mixed::tidy(final_model, effects = "fixed") %>%
+  mutate(
+    term_label = recode(
+      term,
+      `(Intercept)` = "Intercept",
+      diameter_z = "Grip diameter (z)",
+      hand_sizeMedium = "Medium hand size",
+      hand_sizeLarge = "Large hand size",
+      cg_rel_used_z = "Relative balance (z)",
+      `hand_sizeMedium:cg_rel_used_z` = "Medium hand size x relative balance",
+      `hand_sizeLarge:cg_rel_used_z` = "Large hand size x relative balance",
+      is_fountain = "Fountain pen"
+    ),
+    conf_low = estimate - 1.96 * std.error,
+    conf_high = estimate + 1.96 * std.error,
+    odds_ratio = exp(estimate),
+    odds_low = exp(conf_low),
+    odds_high = exp(conf_high)
+  ) %>%
+  filter(term != "(Intercept)")
+
+coef_plot <- final_model_tidy %>%
+  ggplot(aes(x = odds_ratio, y = reorder(term_label, odds_ratio))) +
+  geom_vline(xintercept = 1, linetype = 2, color = "grey55") +
+  geom_errorbarh(aes(xmin = odds_low, xmax = odds_high), height = 0.2, color = "grey45") +
+  geom_point(size = 2.6, color = diam_col) +
+  scale_x_log10() +
+  labs(
+    x = "Odds ratio for a high-comfort rating",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+balance_rank <- stated_vs_revealed_summary %>%
+  arrange(desc(mean_hb_share)) %>%
+  mutate(rank = row_number()) %>%
+  filter(attribute == "Balance") %>%
+  pull(rank)
+
+matched_best <- matched_model_comparison %>% arrange(AIC) %>% slice(1)
+product_type_best <- product_type_comparison %>% arrange(AIC) %>% slice(1)
+lw_best <- lw_model_comparison %>% arrange(AIC) %>% slice(1)
+
+threshold_note <- glue(
+  "Diameter was {term_direction(threshold_coefficients, 'diameter_z')} and fountain status was {term_direction(threshold_coefficients, 'is_fountain')}."
+)
+
+weight_length_note <- if (lw_best$model == "base_current_main") {
+  "Replacing balance with weight, length, or writing pressure did not improve on the base model."
+} else {
+  glue("The best weight/length variant was '{recode(lw_best$model, !!!pretty_model)}', so I treated weight and length as useful checks rather than the core story.")
+}
+
+product_type_note <- if (product_type_best$model == "binary_fountain_same_pen_sample") {
+  "A simple fountain-versus-non-fountain indicator performed at least as well as expanded instrument type."
+} else {
+  "A fuller instrument-type factor fit better than a simple fountain indicator on the pen-only sample, so fountain status should be read as a compact summary rather than the whole explanation."
+}
+
+matched_note <- if (matched_best$model == "matched_current_main") {
+  glue("On the exact same rows, the selected balance model had the lower AIC ({round(matched_best$AIC, 1)}).")
+} else {
+  glue("On the exact same rows, the original press-force model had the lower AIC ({round(matched_best$AIC, 1)}), so I would treat the balance story more cautiously.")
+}
+
+validation_scorecard <- tibble::tribble(
+  ~`Validation step`, ~`What I was checking`, ~`What it showed`,
+  "Alternative thresholds", "Did the story depend entirely on the cut point for 'high comfort'?", threshold_note,
+  "Instrument-type control", "Was the fountain effect just a stand-in for a more detailed pen taxonomy?", product_type_note,
+  "Within/between decomposition", "Could the result be driven only by differences between people rather than within-person comparisons across tools?", "I explicitly separated within-person and between-person variation so the project did not depend on a single pooled model.",
+  "Alternative hypotheses", "Would the story change if I replaced balance with other possible hand size interactions?", weight_length_note
+)
+
+stated_vs_revealed_tbl <- stated_vs_revealed_summary %>%
+  mutate(
+    attribute = recode(attribute, !!!pretty_attr),
+    delta_AIC_vs_base = round(delta_AIC_vs_base, 1),
+    mean_hb_share = mean_hb_share / 100
+  ) %>%
+  select(attribute, mean_hb_share, delta_AIC_vs_base, lrt_p_value, revealed_odds_ratio)
+
+hb_diag_story_tbl <- hb_fit_diagnostics %>%
+  mutate(
+    max_rhat = round(max_rhat, 3),
+    min_n_eff = round(min_n_eff, 0)
+  )
+
+source_note_cv <- "5-fold cross validation, repeated 3 times."
+```
+
+::: section-kicker
+The question
+:::
+
+<p class="lead-copy">
+
+Most people can tell pretty quickly when a pen feels comfortable. The harder question is **why** it feels that way. Is it the length? The grip? The balance? Or does comfort mostly come down to the person using it?
+
+This project uses survey responses and physical measurements from real writing tools to look for patterns behind that feeling. It is not a buying guide or a universal comfort formula, but it does offer some structure for thinking about the main question:
+
+::: pull-quote
+When people rate real writing tools, which features are most connected to comfort?
+:::
+
+</p>
+
+::: section-kicker
+The data
+:::
+
+```{r}
+htmltools::tagList(
+  div(
+    class = "metric-grid",
+    metric_card(comma(n_rated_items), "total instrument ratings", "used to uncover factors in comfort"),
+    metric_card(comma(n_respondents), "survey responses", "from pen and stationery enthusiasts"),
+    metric_card(number(mean_items_per_person, accuracy = 1), "ratings per survey", glue("median = {median_items_per_person} ratings"))
+  )
+)
+```
+
+Survey responses were matched to each instrument's dimensions, weight, and other available features. When the same pen could feel different depending on use, the analysis used the reported writing setup, including whether the cap was posted.
+
+::: section-kicker
+The takeaways
+:::
+
+1.  **People described comfort in two main ways.** Some focused mostly on smoothness, while others spread importance across fit-related features like diameter, weight, length, texture, and material.
+
+2.  **The actual comfort ratings told a slightly different story.** Grip diameter had the clearest relationship with comfort. Balance mattered too, but the pattern shifted across hand sizes. Fountain pens were more likely to receive high-comfort ratings in this sample.
+
+3.  **Posting appears to matter most for smaller hands.** Medium hands usually show a wider pool of high-comfort options than small hands, and posting often made that gap larger.
+
+The rest of the document walks through those findings in more detail, including the ideas they raise and links for those who want to dig further. For more on what the analysis can and cannot tell us, see [What this analysis can and cannot say](#sec-limitations).
+
+:::::::::::::::: {.panel-tabset .top-section-tabs}
+## Results {.active}
+
+### What people said mattered
+
+First, I asked a direct question:
+
+::: pull-quote
+When people think about comfort, what do they say matters most?
+:::
+
+Instead of asking people to rate every feature at once, the survey asked them to make tradeoffs: from small sets of features, choose the one that felt **most important** and the one that felt **least important** for comfort.[^1] Those choices were used to estimate each person's stated priorities and group similar patterns together.
+
+From this, two clear groups emerged:[^4]
+
+```{r}
+plot_pct_ci
+```
+
+One group was overwhelmingly **smoothness-focused**. For them, nib or tip smoothness dominated the idea of comfort.
+
+The other group was more **fit-focused**. Their answers spread importance across features that shape how an instrument sits in the hand: grip diameter, weight, length, texture, and material.
+
+Otherwise, the two groups looked similar across the other survey measures.[^5]
+
+Interestingly **balance ranked low as a stated priority** for both groups. That becomes important in the next section, because balance looked more meaningful when I moved from abstract preferences to actual comfort ratings.
+
+### What the model found
+
+Next, I looked at the comfort ratings themselves. That led to a more practical question:
+
+::: pull-quote
+Which features were most consistently linked to higher comfort ratings?
+:::
+
+The model compared rated instruments while accounting for the fact that the same person often rated more than one tool.[^6] The selected model found **grip diameter**, **relative balance**, **hand size**, and whether the instrument was a **fountain pen** were signals of high-comfort ratings.[^7]
+
+```{r}
+#| label: tbl-final-model-friendly
+#| tbl-cap: "Results of the comfort analysis"
+
+final_model_reader_tbl <- broom.mixed::tidy(
+  final_model,
+  effects = "fixed",
+  conf.int = FALSE
+) %>%
+  mutate(
+    p_value = 2 * stats::pnorm(abs(statistic), lower.tail = FALSE),
+    strength = dplyr::case_when(
+      p_value < 0.01 ~ "Strong",
+      p_value < 0.05 ~ "Moderate",
+      TRUE ~ "Limited"
+    ),
+    result = dplyr::case_when(
+      term == "diameter_z" ~ "Grip diameter",
+      term == "cg_rel_used_z" ~ "Relative balance",
+      term %in% c("hand_sizeMedium:cg_rel_used_z", "hand_sizeLarge:cg_rel_used_z") ~ "Balance × hand size",
+      term == "is_fountain" ~ "Fountain status",
+      term %in% c("hand_sizeMedium", "hand_sizeLarge") ~ "Hand size alone",
+      TRUE ~ term
+    ),
+    what_it_means = dplyr::case_when(
+      term == "diameter_z" & estimate > 0 ~
+        "Larger grip diameters were consistently linked to a higher chance of a high-comfort rating.",
+      term == "diameter_z" & estimate <= 0 ~
+        "Grip diameter showed a relationship with comfort, but not in the expected positive direction.",
+
+      term == "cg_rel_used_z" & p_value < 0.05 ~
+        "Balance had a measurable impact on comfort, but the “best” balance was not the same for everyone.",
+      term == "cg_rel_used_z" ~
+        "Balance showed some relationship with comfort, but the standalone pattern was not especially strong.",
+
+      term %in% c("hand_sizeMedium:cg_rel_used_z", "hand_sizeLarge:cg_rel_used_z") & p_value < 0.05 ~
+        "The relationship between balance and comfort changed depending on hand size.",
+      term %in% c("hand_sizeMedium:cg_rel_used_z", "hand_sizeLarge:cg_rel_used_z") ~
+        "There was some evidence that balance worked differently across hand sizes, but the pattern was not especially strong.",
+
+      term == "is_fountain" & estimate > 0 ~
+        "Fountain pens were more likely to receive high comfort ratings in this sample.",
+      term == "is_fountain" & estimate <= 0 ~
+        "Fountain pens were not more likely to receive high comfort ratings in this sample.",
+
+      term %in% c("hand_sizeMedium", "hand_sizeLarge") & p_value < 0.05 ~
+        "Hand size alone showed a meaningful relationship with comfort ratings.",
+      term %in% c("hand_sizeMedium", "hand_sizeLarge") ~
+        "Hand size alone was not a clear standalone predictor of comfort.",
+
+      TRUE ~ "See technical summary for details."
+    )
+  ) %>%
+  filter(
+    term %in% c(
+      "diameter_z",
+      "cg_rel_used_z",
+      "hand_sizeMedium:cg_rel_used_z",
+      "hand_sizeLarge:cg_rel_used_z",
+      "is_fountain",
+      "hand_sizeMedium",
+      "hand_sizeLarge"
+    )
+  ) %>%
+  mutate(
+    result = factor(
+      result,
+      levels = c(
+        "Grip diameter",
+        "Relative balance",
+        "Balance × hand size",
+        "Fountain status",
+        "Hand size alone"
+      )
+    )
+  ) %>%
+  arrange(result, dplyr::desc(abs(estimate))) %>%
+  group_by(result) %>%
+  summarise(
+    what_it_means = dplyr::first(what_it_means),
+    strength = dplyr::case_when(
+      any(strength == "Strong") ~ "Strong",
+      any(strength == "Moderate") ~ "Moderate",
+      TRUE ~ "Limited"
+    ),
+    .groups = "drop"
+  ) %>%
+  arrange(result)
+
+final_model_reader_tbl %>%
+  gt() %>%
+  cols_width(
+    result ~ px(170),
+    what_it_means ~ px(430),
+    strength ~ px(120)
+  ) %>%
+  cols_label(
+    result = "Result",
+    what_it_means = "What it means",
+    strength = "Strength of signal"
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = result)
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#d9f2e6"),
+    locations = cells_body(
+      rows = strength == "Strong",
+      columns = strength
+    )
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#fff3cd"),
+    locations = cells_body(
+      rows = strength == "Moderate",
+      columns = strength
+    )
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#f8d7da"),
+    locations = cells_body(
+      rows = strength == "Limited",
+      columns = strength
+    )
+  )
+```
+
+<details class="readnote">
+
+<summary>[How to read these charts]{.gutcheck-label}</summary>
+
+::: gutcheck-body
+The charts below show patterns the model estimated, not guarantees for any one person or pen. A higher line or bar means a feature was linked to a higher chance of a high-comfort rating **in this survey sample**, after accounting for the other features in the model.
+
+To make each pattern easier to see, the charts look at one feature at a time. The other factors are either kept at average values or blended across the kinds of people and instruments in the survey.
+
+For more on how to read these results, see [What this analysis can and cannot say](#sec-limitations).
+:::
+
+</details>
+
+#### 1) Grip diameter showed the clearest relationship with comfort
+
+```{r}
+p_diam_final
+```
+
+Grip diameter was the cleanest signal in the analysis. Instruments with **wider grip sections were more likely to receive high comfort ratings**. This does not mean “bigger is always better,” but it does suggest that very narrow grips may be a common source of discomfort for many writers.
+
+<details class="gutcheck">
+
+<summary>[Discussion]{.gutcheck-label}</summary>
+
+::: gutcheck-body
+This result is a reassuring sign that the model is picking up something recognizable. Grip diameter comes up often in pen discussions, and ergonomics research also treats pen size and shape as meaningful design choices.[^8] Because diameter showed up so clearly here, the result lines up with both hobbyist experience and existing research: the way a pen fits in the hand appears seem to matter.
+:::
+
+</details>
+
+#### 2) Balance showed a different relationship with comfort by hand size
+
+```{r}
+p_cg_hand
+```
+
+Balance was the more surprising result.[^15] People did not rate it as especially important when asked directly, but in the comfort ratings it seemed to matter **in different ways for different hand sizes**.
+
+For **smaller hands**, comfort changed more noticeably as the balance point shifted. **Medium hands** showed a flatter pattern, suggesting balance was less likely to get in the way. **Large hands** also appeared more sensitive, though that part of the pattern was less stable in this sample.
+
+<details class="gutcheck">
+
+<summary>[Discussion]{.gutcheck-label}</summary>
+
+::: gutcheck-body
+Balance is harder to pin down than grip size, and there is less formal research to lean on (especially how it interacts with hand size). So I would treat this pattern as something worth exploring, not a settled rule. It also echoes a broader theme in online pen discussions: the same balance or weight shift may not feel the same in every hand. This analysis suggests hand size may be part of that difference.[^9]
+:::
+
+</details>
+
+#### 3) Fountain pens showed a higher likelihood of comfort in this sample
+
+```{r}
+p_fountain_story
+```
+
+Fountain pens were more likely to receive high-comfort ratings. I **would not** read that as proof that fountain pens are inherently more comfortable than other writing tools. A better take is that, in this dataset, fountain pens carried a comfort signal the model could see.
+
+That signal is still useful. “Fountain pen” may be standing in for a bundle of things people care about: smoother writing, less pressure, different grip designs, or the preferences of the people who chose to answer the survey.
+
+<details class="gutcheck">
+
+<summary>[Discussion]{.gutcheck-label}</summary>
+
+::: gutcheck-body
+The model does not directly measure nib smoothness, ink flow, or writing pressure, so this result cannot tell us exactly why fountain pens stood out. Still, it fits with both the stated-importance results and a common community experience: many fountain pen users value smoothness and lower-pressure writing.[^10]
+:::
+
+</details>
+
+### What this analysis can and cannot say {#sec-limitations}
+
+The results in this project are best read as patterns, not rules. This section gathers the main boundaries around those patterns.
+
+This analysis **can** show which patterns appeared in these survey responses after matching ratings to instrument features. It can help generate better questions about comfort, design, and fit.
+
+It **cannot** prove that one feature causes comfort for everyone, predict exactly how a specific pen will feel in your hand, or replace trying pens yourself.
+
+A few limits matter most:
+
+-   **The results depend on this mix of people and tools.** A different survey sample, a different set of pens, or direct measurements for every instrument could shift the size of the effects.
+
+-   **The sample leans toward engaged pen and stationery people.** Most responses came from online fountain pen and stationery communities, so the results reflect a more enthusiast-heavy group than the general public.
+
+-   **Many ratings were already positive.** About two-thirds of ratings were in the “high comfort” group.[^7] That makes the analysis better at separating less-comfortable from very-comfortable than at explaining truly uncomfortable tools.
+
+-   **Some instrument features had to be estimated.** Balance was reconstructed from available dimensions and weights when direct center-of-gravity measurements were not available. That makes the balance results useful, but not perfectly precise.
+
+Those limits do not erase the findings. They define how to use them: as a structured look at comfort patterns in this sample, and as a starting point for thinking more carefully about why certain pens work well for certain people.
+
+## Explorer
+
+### Exploring hand size through fountain pens
+
+The Results section focused on the instruments people in the survey actually rated. This section uses that same comfort model to ask a slightly different question:
+
+::: {.pull-quote}
+Do pen designs tend to fit some hand sizes more easily than others?
+:::
+
+To keep the comparison focused, the explorer looks only at fountain pens.[^11] The section below compares how many pens work well for different hand sizes, with the **best setup** showing results for the highest comfort from writing posted or not posted.[^12]
+
+**Medium hands tend to have a wider pool of options** that look likely to work well than small hands. At the same time, writing setup seems to matter more for small hands: **posting often appears to make pens a worse fit for small hands**, while the impact is usually smaller for medium hands.
+
+```{r}
+div(
+  style = paste(
+    "display: grid;",
+    "grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));",
+    "gap: 0.85rem;",
+    "margin-top: 1rem;",
+    "margin-bottom: 0.75rem;"
+  ),
+
+  selectizeInput(
+    "catalog_price",
+    tagList(
+      "Price Range (USD)",
+      tags$sup(
+        tags$a(
+          href = "#fn-catalog-price",
+          `aria-label` = "Footnote",
+          role = "doc-noteref",
+          "*"
+        )
+      )
+    ),
+    choices = catalog_price_choices,
+    selected = character(0),
+    multiple = TRUE,
+    options = list(placeholder = "All prices")
+  ),
+
+  selectizeInput(
+    "catalog_material",
+    tagList(
+      "Pen Material ",
+      tags$sup(
+        tags$a(
+          href = "#fn-catalog-material",
+          `aria-label` = "Footnote",
+          role = "doc-noteref",
+          "*"
+        )
+      )
+    ),
+    choices = catalog_material_choices,
+    selected = character(0),
+    multiple = TRUE,
+    options = list(placeholder = "All materials")
+  ),
+
+  tags$div(
+    style = "display: none;",
+    tags$ol(
+      tags$li(
+        id = "fn-catalog-price",
+        tags$p("Price ranges are meant to be rough groupings and reflect pre-2025 average prices from online sources.")
+      ),
+      tags$li(
+        id = "fn-catalog-material",
+        tags$p("Materials are grouped into large buckets: premium plastics include materials like resin/acrylic; premium metals include non-standard metals such as bronze, titanium, and silver; general metals include aluminum, steel, and brass; and vintage materials include rubber/ebonite or celluloid.")
+      )
+    )
+  )
+)
+```
+
+```{r}
+plotOutput("catalog_lollipop_plot", height = "380px")
+```
+
+<br>
+**Comparison of Best Setup by Hand Size**
+```{r}
+tableOutput("catalog_summary_table")
+```
+
+```{r}
+#| context: server
+project_dir_srv <- project_dir
+clean_bundle_catalog_srv <- readRDS(file.path(project_dir_srv, "analysis_pipeline_output", "01_clean", "01_clean_data_bundle.rds"))
+review_bundle_catalog_srv <- readRDS(file.path(project_dir_srv, "analysis_pipeline_output", "03_review", "03_glmm_review_bundle.rds"))
+
+catalog_prediction_base_srv <- build_fountain_catalog_prediction_base(
+  product_lookup = clean_bundle_catalog_srv$product_lookup,
+  proxy_models = clean_bundle_catalog_srv$proxy_models,
+  final_model = review_bundle_catalog_srv$selected_models$final_model,
+  final_model_data = review_bundle_catalog_srv$selected_models$final_model_data
+)
+
+catalog_cutoff_eval_srv <- choose_good_option_cutoff(
+  fit = review_bundle_catalog_srv$selected_models$final_model,
+  data = review_bundle_catalog_srv$selected_models$final_model_data,
+  outcome = "high6"
+)
+catalog_good_option_cutoff_srv <- catalog_cutoff_eval_srv$threshold[1]
+
+catalog_filtered_base <- reactive({
+  df <- catalog_prediction_base_srv
+
+  if (length(input$catalog_price) > 0) {
+    df <- df %>% dplyr::filter(price_band %in% input$catalog_price)
+  }
+
+  if (length(input$catalog_material) > 0) {
+    df <- df %>% dplyr::filter(material_family %in% input$catalog_material)
+  }
+
+  if (length(input$catalog_pocket_pen) > 0) {
+    df <- df %>% dplyr::filter(pocket_pen_filter %in% input$catalog_pocket_pen)
+  }
+
+  df
+})
+
+output$catalog_lollipop_plot <- renderPlot({
+  df <- catalog_filtered_base()
+
+  total_n <- nrow(df)
+
+  validate(
+    need(total_n > 0, "No instruments with complete prediction inputs are available for the current filters.")
+  )
+
+  bar_df <- dplyr::bind_rows(
+    df %>% dplyr::transmute(Configuration = "Posted", `Hand Size` = "Small", prob_high = prob_small_posted_effective),
+    df %>% dplyr::transmute(Configuration = "Posted", `Hand Size` = "Medium", prob_high = prob_medium_posted_effective),
+    df %>% dplyr::transmute(Configuration = "Not Posted", `Hand Size` = "Small", prob_high = prob_small_not_posted),
+    df %>% dplyr::transmute(Configuration = "Not Posted", `Hand Size` = "Medium", prob_high = prob_medium_not_posted),
+    df %>% dplyr::transmute(Configuration = "Best Setup", `Hand Size` = "Small", prob_high = optimal_prob_small),
+    df %>% dplyr::transmute(Configuration = "Best Setup", `Hand Size` = "Medium", prob_high = optimal_prob_medium)
+  ) %>%
+    dplyr::mutate(
+      Configuration = factor(Configuration, levels = c("Posted", "Not Posted", "Best Setup")),
+      `Hand Size` = factor(`Hand Size`, levels = c("Small", "Medium"))
+    ) %>%
+    dplyr::group_by(Configuration, `Hand Size`) %>%
+    dplyr::summarise(
+      n_good = sum(prob_high >= catalog_good_option_cutoff_srv, na.rm = TRUE),
+      share_good = n_good / total_n,
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(label = scales::percent(share_good, accuracy = 1))
+
+  plot_width <- session$clientData$output_catalog_lollipop_plot_width
+  is_mobile <- !is.null(plot_width) && plot_width < 500
+
+  p <- ggplot(bar_df, aes(x = `Hand Size`, y = share_good, fill = Configuration)) +
+    geom_col(position = position_dodge(width = 0.74), width = 0.68) +
+    geom_text(
+      aes(label = label),
+      position = position_dodge(width = 0.74),
+      vjust = -0.4,
+      size = if (is_mobile) 2.8 else 3.2
+    ) +
+    scale_fill_manual(values = c(
+      "Posted" = "#8c8c8c",
+      "Not Posted" = "#4c78a8",
+      "Best Setup" = "#59a14f"
+    )) +
+    scale_y_continuous(
+      labels = scales::label_percent(accuracy = 1),
+      limits = c(0, 1),
+      expand = expansion(mult = c(0, 0.06))
+    ) +
+    labs(
+      title = if (is_mobile) "% of pens likely to work well" else NULL,
+      x = NULL,
+      y = if (is_mobile) NULL else "% Pens Likely to Work Well",
+      fill = NULL
+    ) + 
+    coord_cartesian(clip = "off") +
+    theme_minimal(base_size = if (is_mobile) 10 else 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = if (is_mobile) "bottom" else "top",
+      legend.direction = if (is_mobile) "vertical" else "horizontal",
+      plot.margin = if (is_mobile) margin(6, 8, 6, 8) else margin(10, 16, 20, 10),
+      axis.title.y = if (is_mobile) element_blank() else element_text(),
+      legend.text = element_text(size = if (is_mobile) 9 else 10),
+      plot.title = element_text(face = "bold", size = if (is_mobile) 8.5 else 11, hjust = 0)
+    )
+
+  p
+}, res = 110)
+
+output$catalog_summary_table <- renderTable({
+  df <- catalog_filtered_base()
+
+  validate(
+    need(nrow(df) > 0, "No instruments match the current filters.")
+  )
+
+  total_n <- nrow(df)
+
+  format_diff_value <- function(value, formatted_value) {
+    if (is.na(value)) {
+      return(formatted_value)
+    }
+
+    if (value < 0) {
+      paste0(
+        "<span style='color: #b00020; font-weight: 700;'>",
+        formatted_value,
+        "</span>"
+      )
+    } else {
+      formatted_value
+    }
+  }
+
+  summary_numeric <- tibble::tibble(
+    `Hand Size` = c("Small", "Medium"),
+    `# Pens` = rep(total_n, 2),
+    `% Work Well` = c(
+      sum(df$optimal_prob_small >= catalog_good_option_cutoff_srv, na.rm = TRUE) / total_n,
+      sum(df$optimal_prob_medium >= catalog_good_option_cutoff_srv, na.rm = TRUE) / total_n
+    ),
+    `% Posted` = c(
+      mean(
+        !is.na(df$prob_small_posted_effective) &
+          (is.na(df$prob_small_not_posted) | df$prob_small_posted_effective > df$prob_small_not_posted),
+        na.rm = TRUE
+      ),
+      mean(
+        !is.na(df$prob_medium_posted_effective) &
+          (is.na(df$prob_medium_not_posted) | df$prob_medium_posted_effective > df$prob_medium_not_posted),
+        na.rm = TRUE
+      )
+    )
+  )
+
+  difference_row <- summary_numeric %>%
+    dplyr::summarise(
+      `Hand Size` = "Difference",
+      `# Pens` = dplyr::first(`# Pens`) - dplyr::last(`# Pens`),
+      `% Work Well` = dplyr::first(`% Work Well`) - dplyr::last(`% Work Well`),
+      `% Posted` = dplyr::first(`% Posted`) - dplyr::last(`% Posted`)
+    )
+
+  summary_df <- dplyr::bind_rows(summary_numeric, difference_row) %>%
+  dplyr::mutate(
+    is_difference = `Hand Size` == "Difference",
+    `# Pens` = dplyr::if_else(
+      is_difference,
+      "-",
+      scales::comma(`# Pens`)
+    ),
+    `% Work Well` = dplyr::if_else(
+      is_difference,
+      purrr::map2_chr(`% Work Well`, scales::percent(`% Work Well`, accuracy = 1), format_diff_value),
+      scales::percent(`% Work Well`, accuracy = 1)
+    ),
+    `% Posted` = dplyr::if_else(
+      is_difference,
+      purrr::map2_chr(`% Posted`, scales::percent(`% Posted`, accuracy = 1), format_diff_value),
+      scales::percent(`% Posted`, accuracy = 1)
+    )
+  ) %>%
+  dplyr::select(-is_difference)
+
+  summary_df
+},
+striped = TRUE,
+bordered = TRUE,
+hover = TRUE,
+spacing = "s",
+rownames = FALSE,
+sanitize.text.function = identity)
+```
+
+## Methods
+*For those who want a deeper view of the technical details behind the results, this section takes a closer look at how the analysis was built and validated.*
+
+<details class="gutcheck">
+
+<summary>[Project workflow]{.gutcheck-label}</summary>
+
+```{=html}
+<style>
+.methods-flow {
+  margin: 1.25rem 0 1.75rem 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.methods-flow .mermaid {
+  text-align: center;
+}
+
+.methods-flow svg {
+  max-width: 100% !important;
+  height: auto !important;
+  margin-left: auto;
+  margin-right: auto;
+  overflow: visible !important;
+}
+
+.methods-flow .nodeLabel,
+.methods-flow .label {
+  text-align: center !important;
+  line-height: 1.25 !important;
+}
+
+.methods-flow .nodeLabel p {
+  margin: 0 !important;
+}
+
+@media (max-width: 700px) {
+  .methods-flow {
+    margin-left: -0.25rem;
+    margin-right: -0.25rem;
+  }
+
+  .methods-flow svg {
+    min-width: 660px;
+  }
+}
+</style>
+```
+
+::: {.methods-flow}
+```{mermaid}
+%%| fig-width: 7.5
+%%| fig-height: 10
+%%{init: {"theme": "base", "flowchart": {"htmlLabels": true, "nodeSpacing": 32, "rankSpacing": 54}, "themeVariables": {"fontFamily": "Arial, sans-serif", "fontSize": "14px", "primaryTextColor": "#1f2d36", "lineColor": "#5f6b73"}} }%%
+flowchart TB
+
+  inputs["<b>Input data</b><br/>Survey responses<br/>Rated instruments<br/>Product catalog<br/>Reference balance data"]
+
+  features["<b>Feature building</b><br/>Clean respondent fields<br/>Match ratings to catalog<br/>Estimate writing-state features"]
+
+  analysis["<b>Analysis dataset</b><br/>Rated-item comfort data<br/>Respondent context<br/>Physical pen features"]
+
+  maxdiff["<b>MaxDiff model</b><br/>Stated importance<br/>Preference segments"]
+
+  mixed["<b>Mixed-effects modeling</b><br/>Physical features and<br/>survey responses"]
+
+  validation["<b>Validation checks</b><br/>Compare related models<br/>and alternative explanations"]
+
+  final["<b>Selected comfort model</b><br/>Used for Results<br/>and Explorer predictions"]
+
+  results["<b>Results section</b><br/>Main findings and visuals<br/>from rated instruments"]
+
+  explorer_base["<b>Fountain-pen Explorer base</b><br/>Usable catalog entries<br/>with model inputs"]
+
+  explorer_apply["<b>Apply selected model</b><br/>across hand sizes<br/>and posting state"]
+
+  explorer["<b>Interactive Explorer</b><br/>Model-applied view of<br/>the fountain-pen catalog"]
+
+  inputs --> features
+  features --> analysis
+
+  analysis --> maxdiff
+  analysis --> mixed
+
+  maxdiff --> results
+  mixed --> validation
+  validation --> final
+  final --> results
+
+  features --> explorer_base
+  final --> explorer_apply
+  explorer_base --> explorer_apply
+  explorer_apply --> explorer
+
+  classDef source fill:#f8f9fa,stroke:#b8c2cc,color:#1f2d36,stroke-width:1.2px;
+  classDef process fill:#eef7fa,stroke:#79b9cf,color:#1f2d36,stroke-width:1.2px;
+  classDef model fill:#fff4e6,stroke:#d8a24a,color:#1f2d36,stroke-width:1.2px;
+  classDef output fill:#f1f5f2,stroke:#7ca982,color:#1f2d36,stroke-width:1.2px;
+
+  class inputs source;
+  class features,analysis,explorer_base,explorer_apply process;
+  class maxdiff,mixed,validation,final model;
+  class results,explorer output;
+```
+:::
+</details>
+
+### Building out the dataset for analysis
+
+A major part of the project was not the final model itself, but the preparation required to turn messy, partial survey data into comparable features across instruments and respondents.
+
+That preparation involved four main steps:
+
+1. Cleaning and organizing survey data (e.g. hand size, writing habits, and stated feature importance)
+2. Matching each rated instrument to available dimensions and weights[^13]
+3. Estimating balance when direct center-of-gravity data was unavailable
+4. Turning those measurements and estimates into comparable features for the analysis
+
+```{r}
+#| label: tbl-data-sources
+#| tbl-cap: "The data I used to build my models"
+source_tbl %>%
+  gt() %>%
+  cols_width(
+    `Data Source` ~ px(180),
+    `What it contributed` ~ px(280),
+    `How it was used` ~ px(280)
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  )
+```
+
+One important complication was that the same pen can feel different depending on whether the cap is posted (attached to the back) or left off. Because the survey captured how each instrument was used, I **adjusted the measurements to reflect the reported writing state**. For example, posted and unposted pens could receive different values for length, weight, and balance.
+
+This step made the modeled features closer to what respondents actually experienced while writing. It also helped avoid blending together effects that may differ by writing setup, supporting the goal of comparing subjective comfort ratings more consistently across people and instruments.
+
+Balance required the most additional work. I did not have reliable center-of-gravity measurements for most instruments, so I used a reference dataset to estimate balance from available weights and dimensions. I then used the posted or unposted version of those estimates depending on whether the respondent said they posted the cap. This provided practical raw center-of-gravity and relative-balance variables for the later comfort models.[^14]
+
+:::: {.callout-note collapse="true"}
+### Data processing and enrichment
+
+::: panel-tabset
+#### Balance estimates
+
+```{r}
+#| label: tbl-proxy-cv
+#| tbl-cap: "Modeling for center-of-gravity estimates"
+proxy_story_tbl %>%
+  gt() %>%
+  fmt_number(columns = c(mean_RMSE, mean_MAE, mean_R2), decimals = 3) %>%
+  cols_label(
+    proxy = "Estimate target",
+    model_family = "Model",
+    used_for = "Used for",
+    mean_RMSE = "Mean RMSE",
+    mean_MAE = "Mean MAE",
+    mean_R2 = html("Mean R<sup>2</sup>")
+  ) %>%
+  tab_source_note(source_note = source_note_cv)
+```
+
+#### Final usable dataset
+The final comfort model used the subset of ratings that had all required model inputs, so the model sample is smaller than the full set of submitted instrument ratings.
+
+```{r}
+#| label: tbl-feature-coverage
+#| tbl-cap: "How many records we can actually use"
+feature_story_tbl %>%
+  gt() %>%
+  fmt_number(columns = c(nonmissing, total_rows), decimals = 0) %>%
+  fmt_percent(columns = coverage, decimals = 1) %>%
+  cols_label(
+    feature = "Feature",
+    nonmissing = "Non-missing rows",
+    total_rows = "Total rows",
+    coverage = "Coverage"
+  )
+```
+:::
+::::
+
+### How stated importance was estimated
+
+This step measured stated priorities, not actual comfort outcomes. I treated it as a way to understand how people think about comfort, then compared that with what showed up in the instrument ratings.
+
+The stated-importance section used a tradeoff exercise rather than a simple rating scale. People repeatedly saw small groups of comfort features and chose which one mattered most and least. That format helps avoid the common survey problem where everything gets rated as “important.”
+
+Those tradeoffs were converted into individual importance estimates,[^2] then grouped[^3] into the two profiles discussed: **Smoothness-Focused Writers** and **Fit-Focused Writers**.
+
+### Building the model and validating the results
+
+The main comfort model focused on whether an instrument received a high-comfort rating.[^6] The model treated “high comfort” as the top two levels of the 7-point comfort scale: “Comfortable” and “Very Comfortable.” I also checked nearby cutoffs to make sure the results didn't depend entirely on that one choice.
+
+The selected model included **grip diameter**, **hand size**, **relative balance**, and **fountain-pen status**. I also tested several alternatives: different comfort cutoffs, different ways of representing instrument type, within-person versus between-person comparisons, and models that emphasized writing force, weight, or length instead of balance.
+
+Those checks helped separate the main story from modeling noise. The results were not identical in every version, but the same patterns remained strong enough to carry forward: grip diameter mattered clearly, balance interacted with hand size, and fountain pens were rated more comfortably in this sample.
+
+```{r}
+validation_scorecard %>%
+  gt() %>%
+  cols_width(
+    `Validation step` ~ px(180),
+    `What I was checking` ~ px(250),
+    `What it showed` ~ px(320)
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  )
+```
+
+:::: {.callout-note collapse="true"}
+### Expand for model details & validation
+
+::: panel-tabset
+#### Model summary
+
+This table shows how each feature affects the likelihood that a pen is rated as ‘Comfortable’ or ‘Very Comfortable,’ while controling for other factors in the model.
+
+Focus on whether each effect is **positive or negative**, how large it is **relative to others**, and which ones are **statistically significant** (marked with stars). The interaction rows show where an effect works differently for medium or large hands compared to small hands, rather than the same for everyone.
+
+```{r}
+#| label: tbl-final-model-summary
+#| tbl-cap: "Model output"
+#| results: asis
+
+final_model_summary_tbl <- broom.mixed::tidy(
+  final_model,
+  effects = c("fixed", "ran_pars"),
+  conf.int = FALSE
+) %>%
+  mutate(
+    component = dplyr::case_when(
+      effect == "fixed" ~ "Fixed effects",
+      effect == "ran_pars" ~ "Random-effects parameters",
+      TRUE ~ effect
+    ),
+    term = dplyr::recode(
+      term,
+      `(Intercept)` = "Intercept",
+      diameter_z = "Grip diameter (z)",
+      hand_sizeMedium = "Medium hand size",
+      hand_sizeLarge = "Large hand size",
+      cg_rel_used_z = "Relative balance (z)",
+      `hand_sizeMedium:cg_rel_used_z` = "Medium hand size × relative balance",
+      `hand_sizeLarge:cg_rel_used_z` = "Large hand size × relative balance",
+      is_fountain = "Fountain pen",
+      .default = term
+    ),
+    p_value = dplyr::if_else(
+      component == "Fixed effects",
+      2 * stats::pnorm(abs(statistic), lower.tail = FALSE),
+      NA_real_
+    ),
+    sig = dplyr::case_when(
+      is.na(p_value) ~ "",
+      p_value < 0.001 ~ "***",
+      p_value < 0.01 ~ "**",
+      p_value < 0.05 ~ "*",
+      p_value < 0.1 ~ ".",
+      TRUE ~ ""
+    ),
+    p_value_display = dplyr::case_when(
+      is.na(p_value) ~ NA_character_,
+      p_value < 0.001 ~ "<0.001",
+      TRUE ~ formatC(p_value, format = "f", digits = 3)
+    )
+  )
+
+print(
+  final_model_summary_tbl %>%
+    select(component, term, estimate, std.error, statistic, p_value_display, sig) %>%
+    gt(groupname_col = "component") %>%
+    fmt_number(
+      columns = c(estimate, std.error, statistic),
+      decimals = 3
+    ) %>%
+    cols_label(
+      term = "Term",
+      estimate = "Estimate",
+      std.error = "Std. error",
+      statistic = "z",
+      p_value_display = "Pr(>|z|)",
+      sig = ""
+    ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "#f4fbf7"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      rows = sig %in% c("*", "**", "***")
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(color = "#2F8F6B"),
+    locations = cells_body(
+      columns = estimate,
+      rows = estimate > 0
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(color = "#C0392B"),
+    locations = cells_body(
+      columns = estimate,
+      rows = estimate < 0
+    )
+  ) %>%
+  tab_source_note(
+    source_note = md("Signif. codes: *** < 0.001, ** < 0.01, * < 0.05, . < 0.1")
+  )
+)
+```
+
+#### Model odds ratios
+
+This chart shows how each feature changes the likelihood of a pen being rated as high comfort using **odds ratios**. The key reference point is 1.0: values to the right increase the likelihood of comfort, while values to the left decrease it. The dots show the estimated effect, and the horizontal lines show the uncertainty. If they cross the dashed line, the effect is less certain.
+
+```{r}
+#| label: fig-final-coefs
+#| fig-cap: "Estimated odds ratios for the fixed effects in the selected final model"
+#| fig-alt: "A coefficient plot showing odds ratios for the fixed effects in the selected mixed model."
+coef_plot
+```
+
+#### Testing other explanations
+
+An important part of the analysis was checking whether the hand-size pattern was best explained by balance, or whether another feature might account for it just as well.
+
+To do that, I compared several versions of the model. Each one paired hand size with a different feature: balance, writing force, weight, or length.
+
+The main number to focus on is AIC. **Lower AIC values** indicate a better tradeoff between revealing patterns and keeping the model simple. AIC Difference shows how far each model is from the best-performing one.
+
+Among the models compared here, the **balance-based version had the lowest AIC** and was selected as the final model. The versions based on writing force, weight, and length all fit the data less well. This **does not mean** the other features are unimportant, or that balance is the final word. With a larger survey sample, the relative strength of these explanations could shift.
+
+```{r}
+#| label: tbl-matched-comparison
+#| tbl-cap: "Comparison of alternative hand size interaction hypotheses"
+matched_story_tbl %>%
+  gt() %>%
+  fmt_number(columns = c(AIC, delta_AIC), decimals = 1) %>%
+  fmt_number(columns = c(auc, accuracy, R2_marginal, R2_conditional), decimals = 3) %>%
+  cols_label(
+    model_label = "Model",
+    n = "# Ratings",
+    respondents = "# Surveys",
+    AIC = "AIC",
+    delta_AIC = "AIC Difference",
+    auc = "AUC",
+    accuracy = "Accuracy",
+    R2_marginal = html("Marginal R<sup>2</sup>"),
+    R2_conditional = html("Conditional R<sup>2</sup>"),
+  ) %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "#18BC9C"),
+      cell_text(color = "white", weight = "bold")
+    ),
+    locations = cells_body(rows = 1)
+  ) %>%
+  tab_style(
+    style = cell_text(color = "#E74C3C", weight = "bold"),
+    locations = cells_body(
+      columns = delta_AIC,
+      rows = delta_AIC > 0
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold", color = "#2C3E50"),
+    locations = cells_column_labels(everything())
+  )
+```
+:::
+::::
+
+### How the Explorer was built
+
+The Explorer applies the selected comfort model to a broader fountain-pen catalog. While the Results section focuses on instruments people actually rated, the Explorer asks what the same model suggests for other fountain pens with enough catalog data to make a prediction.
+
+Before any Explorer filters are applied, the catalog is limited to pens that stay within the model-supported range of the original rating data. This keeps the Explorer from asking the model to make estimates for pens that are outside the area it was trained to handle.
+
+For each usable pen, the code builds the available writing states: not posted or posted. Each state is translated into the model inputs needed for prediction, including grip diameter, estimated relative balance, fountain-pen status, and hand size. The model then estimates comfort separately for small and medium hands.
+
+The **Best Setup** view keeps whichever available writing state has the higher predicted comfort probability for that hand-size group. The filters do not change the model, they just narrow which pens are included in the visuals.
+
+In the Explorer, “likely to work well” means the model estimated that a pen had a high enough chance of receiving a high-comfort rating, based on the same cutoff used to separate stronger comfort predictions in the original analysis sample.[^12]
+::::::::::::::::
+
+[^1]: This approach is often called best-worst scaling, or MaxDiff. It is useful when simple rating scales tend to produce ties or inflated importance scores, because it asks people to make clearer tradeoffs between options.
+
+[^2]: A model was used to estimate each person’s underlying comfort priorities (sometimes called “utilities”) while also borrowing strength from the overall survey population (hierarchical Bayes). This makes it possible to identify individual patterns without requiring every person to answer a large number of questions.
+
+[^3]: Estimated priorities were placed into groups using a method that sorts people based on how similar their overall importance patterns are (*k*-means). This is useful when the goal is to summarize profiles rather than treat every person’s pattern as entirely unique.
+
+[^4]: The **importance share** shows how much weight a feature received relative to the others. Higher shares mean the feature carried more of the overall importance weight.
+
+[^5]: No meaningful differences were found between these groups across the list of measures in the survey. This included grip posture, writing pressure, handwriting size, hand size, cap-posting preference, balance preference, writing session duration, writing activities, and types of writing instruments used.
+
+[^6]: The analysis uses a model which is designed for situations where the same person provides multiple ratings (GLMM). It accounts for the fact that those ratings are related, instead of treating them as fully independent observations.<br><br> This allows comparisons of how comfort changes across different instruments for the same person. It also accounts for differences in how individuals use the rating scale, like how some people might consistently rate instruments higher or lower than others.
+
+[^7]: “High comfort” means the person chose one of the top two options on the 7-point comfort scale: “Comfortable” or “Very Comfortable.”
+
+[^8]: **References**<br><br> Kuo, L.-C., Tsai, C.-H., Hsu, C.-H., Lin, C.-F., Hsu, H.-Y., Liu, C.-W., & Lin, Y.-C. (2025). *Are the shapes and sizes of pen barrel the factors to influence handwriting kinetics?* *Applied Ergonomics, 129*, 104595. https://doi.org/10.1016/j.apergo.2025.104595<br><br> Udo, H., Otani, T., Udo, A., & Yoshinaga, F. (2000). *An electromyographic study of two different types of ballpoint pens: Investigation of a one hour writing operation*. *Industrial Health, 38*(1), 47–56. https://doi.org/10.2486/indhealth.38.47<br><br> Hoffmann, E. R., Goonetilleke, R. S., & Luximon, A. (2008). *Effects of pen design on drawing and writing performance*. *Applied Ergonomics, 40*(2), 292–301. https://www.sciencedirect.com/science/article/pii/S0003687008000719<br><br> **Community discussion**:<br><br> Fountain Pen Network. *Pen Recommendation: Comfortable Grip?* https://www.fountainpennetwork.com/forum/topic/44879-pen-recommendation-comfortable-grip/
+
+[^9]: **References**<br><br> Kim, K., Proctor, R. W., & Salvendy, G. (2020). *Emotional factors and physical properties of ballpoint pens that affect user satisfaction: Implications for pen and stylus design*. *Applied Ergonomics, 85*, 103067. https://doi.org/10.1016/j.apergo.2020.103067<br><br> Parush, S., Levanon-Erez, N., & Weintraub, N. (1998). *Ergonomic factors influencing handwriting performance*. *Work, 11*(3), 295–305. https://doi.org/10.3233/WOR-1998-11306<br><br> **Community discussion**:<br><br> Reddit r/fountainpens. *Let’s talk about hands!* https://www.reddit.com/r/fountainpens/comments/os7mry/lets_talk_about_hands/<br><br> Reddit r/fountainpens. *The Balancing Point* https://www.reddit.com/r/fountainpens/comments/hde3b0/the_balancing_point/<br><br> **Retail guide**:<br><br> Fountain Pen Revolution. *How Pen Weight and Balance Affect Writing* https://fprevolutionusa.com/blogs/news/pen-weight-balance-affect-writing
+
+[^10]: **References**<br><br> Schomaker, L. R. B., & Plamondon, R. (1990). *The relation between pen force and pen-point kinematics in handwriting*. *Biological Cybernetics, 63*, 277–289. https://www.ai.rug.nl/\~lambert/papers/pen-pressure.pdf<br><br> Kim, J., Moon, M.-W., Lee, K.-R., Mahadevan, L., & Kim, H.-Y. (2011). *Hydrodynamics of writing with ink*. *Physical Review Letters, 107*(26), 264501. https://doi.org/10.1103/PhysRevLett.107.264501<br><br> **Community discussion**:<br><br> *u/TexasNiteowl*. (2018, May 4). *One year in and I’m still trying to learn that I don’t have to “press” so hard!* \[Online forum post\]. *Reddit, r/fountainpens*. https://www.reddit.com/r/fountainpens/comments/8exmga/one_year_in_and_im_still_trying_to_learn_that_i/
+
+[^11]: The main model included a fountain-pen term, and the Results section already showed that fountain pens tended to receive higher comfort ratings in this sample. Restricting the explorer to fountain pens helps avoid mixing instrument-type patterns with the narrower question of how **diameter**, **balance**, and **posting** may affect comfort *within* one family of instruments.
+
+[^12]: The “works well” cutoff was not chosen by hand. Different cuttoffs were tested using the original survey ratings and the one that best separated high-comfort ratings from the rest was selected.
+
+[^13]: Data for each writing instrument was collected from multiple public online sources. Because measurements sometimes differed, I used the median value across sources to create a single, consistent record for each feature in the final catalog.
+
+[^14]: The balance estimation models performed well for posted pens and reasonably for raw center-of-gravity overall. Estimates for unposted relative balance were noisier, meaning balance effects should be interpreted as directional rather than perfectly precise.
+
+[^15]: Relative balance describes where the balance point falls as percentage of the usable writing length, rather than the raw distance from the tip. That made it easier to compare longer and shorter instruments on the same scale.

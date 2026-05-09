@@ -1,0 +1,288 @@
+<style>
+:root {
+  --fn-pop-bg: var(--bs-body-bg, #ffffff);
+  --fn-pop-fg: var(--bs-body-color, #212529);
+  --fn-pop-border: rgba(0, 0, 0, 0.14);
+  --fn-pop-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+}
+
+/* Active reference */
+a[role="doc-noteref"].footnote-active {
+  text-decoration: none;
+}
+
+/* Shared overlay */
+.footnote-click-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+/* Desktop popover */
+.footnote-click-popover {
+  position: absolute;
+  z-index: 9999;
+  max-width: min(420px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  background: var(--fn-pop-bg);
+  color: var(--fn-pop-fg);
+  border: 1px solid var(--fn-pop-border);
+  border-radius: 0.7rem;
+  box-shadow: var(--fn-pop-shadow);
+  padding: 0.85rem 1rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Mobile bottom sheet */
+.footnote-click-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: var(--fn-pop-bg);
+  color: var(--fn-pop-fg);
+  border-top-left-radius: 1rem;
+  border-top-right-radius: 1rem;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.18);
+  padding: 0.75rem 1rem 1rem 1rem;
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.footnote-click-handle {
+  width: 42px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.45);
+  margin: 0 auto 0.8rem auto;
+}
+
+.footnote-click-popover p:last-child,
+.footnote-click-sheet p:last-child {
+  margin-bottom: 0;
+}
+
+.footnote-click-popover .footnote-back,
+.footnote-click-sheet .footnote-back {
+  display: none;
+}
+
+/* Wrap long links in both desktop and mobile footnotes */
+.footnote-click-popover a,
+.footnote-click-sheet a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Slightly larger readable text on small screens */
+@media (max-width: 768px) {
+  .footnote-click-sheet {
+    font-size: 1rem;
+    line-height: 1.5;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+</style>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  let activePopup = null;
+  let activeOverlay = null;
+  let activeRef = null;
+
+  function isMobileMode() {
+    return window.matchMedia("(max-width: 768px), (pointer: coarse)").matches;
+  }
+
+  function closeFootnote() {
+    if (activePopup) {
+      activePopup.remove();
+      activePopup = null;
+    }
+    if (activeOverlay) {
+      activeOverlay.remove();
+      activeOverlay = null;
+    }
+    if (activeRef) {
+      activeRef.classList.remove("footnote-active");
+      activeRef.setAttribute("aria-expanded", "false");
+      activeRef = null;
+    }
+    document.documentElement.style.overflow = "";
+    document.body.style.overflow = "";
+  }
+
+  function buildContent(noteEl) {
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = noteEl.innerHTML;
+
+    wrapper.querySelectorAll('a[href^="#fnref"]').forEach((el) => {
+      el.classList.add("footnote-back");
+    });
+
+    return wrapper.innerHTML;
+  }
+
+  function makeOverlay() {
+    const overlay = document.createElement("div");
+    overlay.className = "footnote-click-overlay";
+    overlay.addEventListener("click", closeFootnote);
+    return overlay;
+  }
+
+  function positionDesktopPopover(popover, ref) {
+    const refRect = ref.getBoundingClientRect();
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const gap = 10;
+
+    popover.style.visibility = "hidden";
+    popover.style.left = "0px";
+    popover.style.top = "0px";
+    document.body.appendChild(popover);
+
+    const popRect = popover.getBoundingClientRect();
+
+    let left = scrollX + refRect.left;
+    let top = scrollY + refRect.bottom + gap;
+
+    if (left + popRect.width > scrollX + window.innerWidth - 12) {
+      left = scrollX + window.innerWidth - popRect.width - 12;
+    }
+    if (left < scrollX + 12) {
+      left = scrollX + 12;
+    }
+
+    if (top + popRect.height > scrollY + window.innerHeight - 12) {
+      top = scrollY + refRect.top - popRect.height - gap;
+    }
+    if (top < scrollY + 12) {
+      top = scrollY + 12;
+    }
+
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+    popover.style.visibility = "visible";
+  }
+
+  function openDesktopPopover(ref, noteEl) {
+    const popover = document.createElement("div");
+    popover.className = "footnote-click-popover";
+    popover.setAttribute("role", "dialog");
+    popover.setAttribute("aria-label", "Footnote");
+    popover.innerHTML = buildContent(noteEl);
+
+    positionDesktopPopover(popover, ref);
+
+    activePopup = popover;
+    activeRef = ref;
+    ref.classList.add("footnote-active");
+    ref.setAttribute("aria-expanded", "true");
+  }
+
+  function openMobileSheet(ref, noteEl) {
+    const overlay = makeOverlay();
+    const sheet = document.createElement("div");
+    sheet.className = "footnote-click-sheet";
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-label", "Footnote");
+    sheet.innerHTML = `
+      <div class="footnote-click-handle" aria-hidden="true"></div>
+      ${buildContent(noteEl)}
+    `;
+
+    overlay.appendChild(sheet);
+    document.body.appendChild(overlay);
+
+    activeOverlay = overlay;
+    activePopup = sheet;
+    activeRef = ref;
+    ref.classList.add("footnote-active");
+    ref.setAttribute("aria-expanded", "true");
+
+    // Prevent background scroll while sheet is open
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+
+    // Prevent clicks inside the sheet from closing it
+    sheet.addEventListener("click", (e) => e.stopPropagation());
+  }
+
+  function openFootnote(ref, noteEl) {
+    if (isMobileMode()) {
+      openMobileSheet(ref, noteEl);
+    } else {
+      openDesktopPopover(ref, noteEl);
+    }
+  }
+
+  document.querySelectorAll('a[role="doc-noteref"]').forEach((ref) => {
+    ref.setAttribute("aria-expanded", "false");
+
+    ref.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const href = ref.getAttribute("href");
+      if (!href || !href.startsWith("#")) return;
+
+      const noteEl = document.querySelector(href);
+      if (!noteEl) return;
+
+      if (activeRef === ref) {
+        closeFootnote();
+        return;
+      }
+
+      closeFootnote();
+      openFootnote(ref, noteEl);
+    });
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!activePopup || !activeRef) return;
+    if (isMobileMode()) return;
+    if (activePopup.contains(e.target)) return;
+    if (activeRef.contains(e.target)) return;
+    closeFootnote();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeFootnote();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (!activePopup || !activeRef) return;
+
+    const href = activeRef.getAttribute("href");
+    if (!href) return;
+    const noteEl = document.querySelector(href);
+    if (!noteEl) return;
+
+    closeFootnote();
+    openFootnote(activeRef, noteEl);
+  });
+
+window.addEventListener("scroll", (e) => {
+  if (!activePopup || !activeRef) return;
+  if (isMobileMode()) return;
+
+  if (activePopup.contains(e.target)) return;
+
+  positionDesktopPopover(activePopup, activeRef);
+}, true);
+});
+</script>
