@@ -35,7 +35,7 @@ The core finding is that **grip diameter** and **relative balance point** are th
 ├── stan/
 │   └── hb_maxdiff.stan                  # Hierarchical Bayes MaxDiff Stan model
 ├── data/
-│   └── raw/                             # Raw input CSVs (not committed — see .gitignore)
+│   └── raw/                             # Raw input CSVs (not committed)
 ├── writing_comfort_portfolio.qmd        # Interactive Quarto/Shiny report (final output)
 └── click-footnotes.html                 # HTML include for footnote behavior in the QMD
 ```
